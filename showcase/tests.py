@@ -11,7 +11,8 @@ from django.test import TestCase
 from django.urls import reverse
 
 from .models import (
-    Education, Pillar, Profile, ProfileFact, Project, SkillGroup, Stat,
+    Education, Pillar, Profile, ProfileFact, Project, ProjectShot, SkillGroup,
+    Stat,
 )
 
 
@@ -115,8 +116,51 @@ class SeedDataTestCase(TestCase):
         self.assertIn('renwujiance-demo.mp4', html)
 
     def test_detail_uses_placeholder_when_no_media(self):
-        response = self.client.get('/project/gesture-hci/')
+        # 临时建一个没有任何演示素材的项目，验证占位提示
+        Project.objects.create(
+            title='占位测试项目', slug='placeholder-demo',
+            category=Project.CATEGORY_DELIVERY, summary='用于测试空态占位。',
+        )
+        response = self.client.get('/project/placeholder-demo/')
         self.assertContains(response, 'video-placeholder')
+
+    # ---------- 实机截图 / 结果图 ----------
+    def test_seed_creates_shot_gallery(self):
+        self.assertEqual(ProjectShot.objects.count(), 14)
+        for slug in ('experimentpilot-ai', 'femnsic-fatigue-optimization',
+                     'subway-risk-decision', 'student-behavior-profiling',
+                     'yolov8-detection-desktop'):
+            with self.subTest(project=slug):
+                project = Project.objects.get(slug=slug)
+                self.assertTrue(project.has_shots)
+                for shot in project.shots.all():
+                    self.assertTrue(shot.image.name.startswith('shots/%s/' % slug))
+
+    def test_project_without_shots(self):
+        # 手势交互只有视频、没有截图
+        gesture = Project.objects.get(slug='gesture-hci')
+        self.assertFalse(gesture.has_shots)
+        self.assertTrue(gesture.has_video)
+
+    def test_detail_renders_shot_gallery(self):
+        response = self.client.get('/project/experimentpilot-ai/')
+        html = response.content.decode()
+        self.assertIn('shot-grid', html)
+        self.assertIn('shots/experimentpilot-ai/01-structured-records.png', html)
+        # 截图说明与类型标签都要渲染出来
+        self.assertIn('结构化文献查询', html)
+        self.assertIn('运行结果', html)
+
+    def test_detail_hides_gallery_when_no_shots(self):
+        response = self.client.get('/project/gesture-hci/')
+        self.assertNotContains(response, 'shot-grid')
+
+    def test_shot_ordering_and_str(self):
+        project = Project.objects.get(slug='student-behavior-profiling')
+        orders = list(project.shots.values_list('order', flat=True))
+        self.assertEqual(orders, sorted(orders))
+        first = project.shots.first()
+        self.assertTrue(str(first))  # __str__ 回退到 caption / 文件名，不应报错
 
     def test_detail_pager_links(self):
         response = self.client.get('/project/femnsic-fatigue-optimization/')

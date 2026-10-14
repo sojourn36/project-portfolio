@@ -37,7 +37,8 @@ def home(request):
 def detail(request, slug):
     """详情页：完整介绍 + 可播放的演示视频。"""
     project = get_object_or_404(
-        Project.objects.prefetch_related('contributions', 'metrics', 'techs', 'links'),
+        Project.objects.prefetch_related('contributions', 'metrics', 'techs',
+                                         'links', 'shots'),
         slug=slug,
     )
 

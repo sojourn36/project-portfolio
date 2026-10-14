@@ -5,7 +5,7 @@ from django.utils.html import format_html
 
 from .models import (
     Award, Contribution, Education, Metric, Pillar, Profile, ProfileFact,
-    Project, ProjectLink, SkillGroup, Stat, TechItem,
+    Project, ProjectLink, ProjectShot, SkillGroup, Stat, TechItem,
 )
 
 
@@ -29,15 +29,34 @@ class ProjectLinkInline(admin.TabularInline):
     extra = 1
 
 
+class ProjectShotInline(admin.TabularInline):
+    """实机截图 / 结果图：一个项目可挂多张，按 order 排序。"""
+
+    model = ProjectShot
+    extra = 1
+    fields = ('order', 'kind', 'image', 'caption', 'image_preview')
+    readonly_fields = ('image_preview',)
+    ordering = ('order', 'id')
+
+    @admin.display(description='预览')
+    def image_preview(self, obj):
+        if not obj.pk or not obj.image:
+            return '—'
+        return format_html(
+            '<img src="{}" style="height:72px;border-radius:4px;'
+            'border:1px solid #d4d4d8" />', obj.image.url)
+
+
 @admin.register(Project)
 class ProjectAdmin(admin.ModelAdmin):
     list_display = ('title', 'category', 'role', 'order',
-                    'is_featured', 'video_status', 'updated_at')
+                    'is_featured', 'video_status', 'shot_count', 'updated_at')
     list_filter = ('category', 'is_featured')
     list_editable = ('order', 'is_featured')
     search_fields = ('title', 'summary', 'intro', 'role')
     prepopulated_fields = {'slug': ('title',)}
-    inlines = [ContributionInline, MetricInline, TechItemInline, ProjectLinkInline]
+    inlines = [ContributionInline, MetricInline, TechItemInline,
+               ProjectLinkInline, ProjectShotInline]
     fieldsets = (
         ('基本信息', {
             'fields': ('title', 'slug', 'badge', 'category', 'role', 'period',
@@ -51,6 +70,12 @@ class ProjectAdmin(admin.ModelAdmin):
             'description': '优先播放上传的视频文件；若只填外部链接则用 iframe 嵌入；'
                            '都没有时展示占位提示。'
         }),
+        ('实机截图 / 结果图', {
+            'fields': (),
+            'description': '在下方「实机截图 / 结果图」内联区逐张添加。'
+                           '这些是项目真实运行产出的界面截图与结果图，'
+                           '会以图集形式展示在详情页。'
+        }),
     )
 
     def video_status(self, obj):
@@ -63,6 +88,13 @@ class ProjectAdmin(admin.ModelAdmin):
         return format_html('<span style="color:#b45309">— 待补充</span>')
 
     video_status.short_description = '演示素材'
+
+    @admin.display(description='实机截图')
+    def shot_count(self, obj):
+        n = obj.shots.count()
+        if not n:
+            return format_html('<span style="color:#b45309">— 无</span>')
+        return format_html('<span style="color:#0d9488">✔ {} 张</span>', n)
 
 
 @admin.register(Profile)

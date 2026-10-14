@@ -39,6 +39,7 @@
     <div class="detail-main">
 
       <!-- 演示视频 -->
+      {% if project.has_demo %}
       <section class="block">
         <h2 class="block-title"><span class="bar"></span>演示视频</h2>
 
@@ -59,17 +60,9 @@
                     allowfullscreen loading="lazy"></iframe>
           </div>
 
-        {% elif project.demo_image %}
+        {% else %}
           <div class="video-frame">
             <img src="{{ project.demo_image.url }}" alt="{{ project.title }} 演示动图">
-          </div>
-
-        {% else %}
-          <div class="video-placeholder">
-            <span class="vp-icon">🎬</span>
-            <strong>演示视频待补充</strong>
-            <p>将视频文件放入 <code>media/videos/</code>，或在管理后台的「演示视频」字段上传，
-               页面会自动切换为播放器。</p>
           </div>
         {% endif %}
 
@@ -77,6 +70,41 @@
           <p class="demo-caption">{{ project.video_caption }}</p>
         {% endif %}
       </section>
+
+      {% elif not project.has_shots %}
+      <section class="block">
+        <h2 class="block-title"><span class="bar"></span>演示视频</h2>
+        <div class="video-placeholder">
+          <span class="vp-icon">🎬</span>
+          <strong>演示视频待补充</strong>
+          <p>将视频文件放入 <code>media/videos/</code>，或在管理后台的「演示视频」字段上传，
+             页面会自动切换为播放器。</p>
+        </div>
+      </section>
+      {% endif %}
+
+      <!-- 实机运行截图 / 结果图 -->
+      {% if project.has_shots %}
+      <section class="block">
+        <h2 class="block-title"><span class="bar"></span>实机运行</h2>
+        <p class="block-lead">以下均为项目在本机真实运行时产出的界面截图与结果图，点击可查看原图。</p>
+        <div class="shot-grid">
+          {% for shot in project.shots.all %}
+            <figure class="shot-card">
+              <a class="shot-thumb" href="{{ shot.image.url }}" target="_blank"
+                 rel="noopener noreferrer">
+                <img src="{{ shot.image.url }}" loading="lazy"
+                     alt="{% if shot.caption %}{{ shot.caption }}{% else %}{{ project.title }}{% endif %}">
+              </a>
+              <figcaption>
+                <span class="shot-kind kind-{{ shot.kind }}">{{ shot.get_kind_display }}</span>
+                {% if shot.caption %}<span class="shot-caption">{{ shot.caption }}</span>{% endif %}
+              </figcaption>
+            </figure>
+          {% endfor %}
+        </div>
+      </section>
+      {% endif %}
 
       <!-- 完整介绍 -->
       {% if project.intro %}

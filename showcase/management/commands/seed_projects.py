@@ -16,8 +16,33 @@ from django.db import transaction
 
 from showcase.models import (
     Award, Contribution, Education, Metric, Pillar, Profile, ProfileFact,
-    Project, ProjectLink, SkillGroup, Stat, TechItem,
+    Project, ProjectLink, ProjectShot, SkillGroup, Stat, TechItem,
 )
+
+
+# ==========================================================================
+# 实机素材：media/ 下已归集的运行产出（由 portfolio/collect_media.py 统一复制）
+# 这里只写相对路径，不复制文件本体。
+# ==========================================================================
+def _media_exists(media_root, rel):
+    """判断 media/ 下是否已存在该相对路径的文件。"""
+    return bool(rel) and os.path.exists(
+        os.path.join(media_root, rel.replace('/', os.sep)))
+
+
+def _attach(project, field, target, source, media_root):
+    """把素材挂到字段上：优先用 media/ 下已归集的成品，其次回退到源文件。
+
+    只写相对路径、不复制文件——媒体本体由 collect_media.py 归集。
+    """
+    if not target:
+        return False
+    if not (_media_exists(media_root, target)
+            or (source and os.path.exists(source))):
+        return False
+    setattr(project, field, target)
+    project.save(update_fields=[field])
+    return True
 
 
 PROJECTS = [
@@ -66,6 +91,16 @@ PROJECTS = [
             (ProjectLink.KIND_OTHER, '冻结编号 DAY6_6_FROZEN_20260831', ''),
             (ProjectLink.KIND_PAPER, '架构文档 / 答辩材料 / 演示 GIF', ''),
         ],
+        'shots': [
+            ('shots/experimentpilot-ai/01-structured-records.png', ProjectShot.KIND_UI,
+             '结构化文献查询：只读 SQLite 主表、不接受自由 SQL；本次命中 17 条记录，'
+             '可靠 17 条 / 待复核 0 条，每条记录都带来源文献可追溯。'),
+            ('shots/experimentpilot-ai/02-expert-prediction.png', ProjectShot.KIND_RESULT,
+             '冻结 FeMnSiC 专家模型推理：Mn 28.40 / Si 3.10 / C 0.30 → 预测寿命 11,875 cycles，'
+             '适用域 CORE、AD 距离 0.457；界面明确标注「这是冻结模型预测，不是实验结果」。'),
+            ('shots/experimentpilot-ai/03-quality-eval.png', ProjectShot.KIND_RESULT,
+             '20 题固定评测集真实运行：通过 20/20（100.0%），响应延迟 P50 4.19 s、P95 13.47 s。'),
+        ],
     },
 
     # ------------------------------------------------------------------
@@ -112,6 +147,20 @@ PROJECTS = [
             (ProjectLink.KIND_OTHER, '闭环迭代 33 → 38 → 43 → 46 条冻结数据', ''),
             (ProjectLink.KIND_OTHER, '跨模型稳定双脊线候选结构', ''),
         ],
+        'shots': [
+            ('shots/femnsic-fatigue-optimization/01-predicted-vs-measured.png',
+             ProjectShot.KIND_FIGURE,
+             '加权集成模型在留一交叉验证（LOOCV）下的预测寿命 vs 实测寿命，35 条样本，'
+             '虚线为理想对角线；本次复算 R²=0.7437、RMSE=1600.3 cycles。'),
+            ('shots/femnsic-fatigue-optimization/02-composition-candidate-map.png',
+             ProjectShot.KIND_FIGURE,
+             '主动学习候选点在 Mn–Si 成分空间上的投影（颜色 = 预测疲劳寿命）；'
+             '推荐最优点 Mn 20.58 / Si 2.58 / C 0.53，保守预测寿命 8904.6 cycles。'),
+            ('shots/femnsic-fatigue-optimization/03-loocv-model-comparison.png',
+             ProjectShot.KIND_FIGURE,
+             '无泄漏 LOOCV 下 9 个模型的 RMSE 对比：KRR 最优（R²=0.7877、RMSE=1456.5），'
+             '加权集成次之（R²=0.7437），Huber 最差。'),
+        ],
     },
 
     # ------------------------------------------------------------------
@@ -155,6 +204,16 @@ PROJECTS = [
             (ProjectLink.KIND_OTHER, '输出影响范围 / 高风险站点 / 演化阶段', ''),
             (ProjectLink.KIND_OTHER, '支撑限流、疏导、运力调配与接驳决策', ''),
         ],
+        'shots': [
+            ('shots/subway-risk-decision/01-risk-station-ranking.png', ProjectShot.KIND_RESULT,
+             '上海轨道交通 4 号线（26 站、环线）在上海火车站 2021-04-02 08:00 故障情景下的'
+             '受影响车站排名，按额外聚集代理值排序，共识别 5 个风险站点。'),
+            ('shots/subway-risk-decision/02-station-delta-heatmap.png', ProjectShot.KIND_FIGURE,
+             '全线各站进出站客流变化热力图，18 个预测步（10 分钟粒度）。'),
+            ('shots/subway-risk-decision/03-fault-station-flow.png', ProjectShot.KIND_FIGURE,
+             '故障站（上海火车站）的客流曲线与恢复过程；额外聚集代理峰值 653.5，'
+             '该指标是运营聚集度代理量，而非精确站内人数。'),
+        ],
     },
 
     # ------------------------------------------------------------------
@@ -196,6 +255,20 @@ PROJECTS = [
         'links': [
             (ProjectLink.KIND_OTHER, '国家级大创项目 · 项目负责人', ''),
         ],
+        'shots': [
+            ('shots/student-behavior-profiling/01-kmeans-clustering.png', ProjectShot.KIND_UI,
+             '成绩相关性概况：K-Means 聚类交互式组件，可调聚类数与展示特征，'
+             '当前按「第一次课正答率」将学生聚为 2 类。'),
+            ('shots/student-behavior-profiling/02-student-detail.png', ProjectShot.KIND_UI,
+             '学生信息子页面：单生的课堂正答率 / 互动参与率、课后作业得分与阶段测试曲线'
+             '（学生姓名已匿名化为编号）。'),
+            ('shots/student-behavior-profiling/03-course-tracking.png', ProjectShot.KIND_UI,
+             '课程信息子页面：按班级追踪上课效果（正答率均值与参与率均值合成），'
+             '最近上课效果 71.875。'),
+            ('shots/student-behavior-profiling/04-classroom-data.png', ProjectShot.KIND_UI,
+             '课堂数据分析：由课堂视频解析出的学生行为专注度、情绪、头部姿态与群体专注度'
+             '曲线（60 个时间点）。'),
+        ],
     },
 
     # ------------------------------------------------------------------
@@ -235,12 +308,16 @@ PROJECTS = [
         ],
         'techs': ['YOLOv8 / Ultralytics', 'PyQt5', 'OpenCV', '目标跟踪',
                   'pyecharts', 'PyTorch', '模型训练与评估'],
-        'video_caption': '演示视频：YOLOv8 检测 + 跨帧目标跟踪的运行效果。',
-        'video_source': r'D:\pycharm\RenwuJiance\1.mp4',
+        'video_caption': '演示视频：YOLOv8 检测 + 跨帧目标跟踪的实际输出（25 秒，1280×720）。',
         'video_target': 'videos/renwujiance-demo.mp4',
         'links': [
             (ProjectLink.KIND_OTHER, '桌面端：多路摄像头管理 + 检测播放', ''),
             (ProjectLink.KIND_OTHER, '检测结果地图可视化（pyecharts）', ''),
+        ],
+        'shots': [
+            ('shots/yolov8-detection-desktop/01-desktop-gui.png', ProjectShot.KIND_GUI,
+             'PyQt5 桌面端主界面：多路摄像头增删管理、图片 / 视频检测、'
+             '检测画面实时播放与检测结果地图布点。'),
         ],
     },
 
@@ -275,6 +352,8 @@ PROJECTS = [
         ],
         'techs': ['OpenCV', 'MediaPipe', '手势识别', '实时视频处理',
                   'pycaw', 'screen_brightness_control'],
+        'video_caption': '演示视频：摄像头实时手势控制系统音量与屏幕亮度（20.6 秒，1280×720）。',
+        'video_target': 'videos/gesture-hci-demo.mp4',
         'links': [],
     },
 ]
@@ -431,6 +510,7 @@ class Command(BaseCommand):
             video_target = data.pop('video_target', None)
             demo_source = data.pop('demo_source', None)
             demo_target = data.pop('demo_target', None)
+            shots = data.pop('shots', [])
 
             project = Project.objects.create(**data)
 
@@ -444,15 +524,26 @@ class Command(BaseCommand):
                 ProjectLink.objects.create(project=project, kind=kind, label=label,
                                            url=url, order=i)
 
-            # 关联本地演示素材（不复制文件，只写入相对路径）
-            if video_target and video_source and os.path.exists(video_source):
-                project.video_file.name = video_target
-                project.save(update_fields=['video_file'])
-                self.stdout.write('  视频: {} -> {}'.format(video_source, video_target))
-            if demo_target and demo_source and os.path.exists(demo_source):
-                project.demo_image.name = demo_target
-                project.save(update_fields=['demo_image'])
-                self.stdout.write('  动图: {} -> {}'.format(demo_source, demo_target))
+            # 关联本地演示素材（media/ 下已归集的成品，只写相对路径不复制文件）
+            if _attach(project, 'video_file', video_target, video_source, media_root):
+                self.stdout.write('  视频: {}'.format(video_target))
+            if _attach(project, 'demo_image', demo_target, demo_source, media_root):
+                self.stdout.write('  动图: {}'.format(demo_target))
+
+            # 实机截图 / 结果图
+            n_shots = 0
+            for i, (rel, kind, caption) in enumerate(shots):
+                if not _media_exists(media_root, rel):
+                    self.stdout.write(self.style.WARNING(
+                        '  [!] 截图缺失，已跳过: {}'.format(rel)))
+                    continue
+                shot = ProjectShot(project=project, kind=kind,
+                                   caption=caption, order=i)
+                shot.image.name = rel
+                shot.save()
+                n_shots += 1
+            if n_shots:
+                self.stdout.write('  截图: {} 张'.format(n_shots))
 
             self.stdout.write(self.style.SUCCESS('  ✔ {}'.format(project.title)))
 
@@ -465,9 +556,10 @@ class Command(BaseCommand):
             SkillGroup.objects.create(name=name, items=items, order=i)
 
         self.stdout.write(self.style.SUCCESS(
-            '\n导入完成：{} 个项目 / {} 项荣誉 / {} 个技能分组 / '
+            '\n导入完成：{} 个项目 / {} 张实机截图 / {} 项荣誉 / {} 个技能分组 / '
             '{} 条统计 / {} 张资料卡 / {} 条主线 / {} 段教育经历'.format(
-                Project.objects.count(), Award.objects.count(),
+                Project.objects.count(), ProjectShot.objects.count(),
+                Award.objects.count(),
                 SkillGroup.objects.count(), Stat.objects.count(),
                 ProfileFact.objects.count(), Pillar.objects.count(),
                 Education.objects.count())))

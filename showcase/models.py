@@ -85,6 +85,48 @@ class Project(models.Model):
     def has_demo(self):
         return bool(self.video_file or self.video_external_url or self.demo_image)
 
+    @property
+    def has_shots(self):
+        """是否配置了实机截图 / 结果图。"""
+        return bool(self.shots.exists()) if self.pk else False
+
+
+class ProjectShot(models.Model):
+    """项目详情页的实机截图 / 结果图。
+
+    与 ``demo_image`` 的区别：``demo_image`` 是「单张演示图」，
+    而本表用于承载**多张**真实运行产出（界面截图、模型输出图、检测结果等），
+    支持逐张配文字说明与排序。
+    """
+
+    KIND_UI = 'ui'
+    KIND_RESULT = 'result'
+    KIND_FIGURE = 'figure'
+    KIND_GUI = 'gui'
+
+    KIND_CHOICES = [
+        (KIND_UI, '界面截图'),
+        (KIND_RESULT, '运行结果'),
+        (KIND_FIGURE, '图表 / 曲线'),
+        (KIND_GUI, '桌面端界面'),
+    ]
+
+    project = models.ForeignKey(Project, related_name='shots',
+                                on_delete=models.CASCADE, verbose_name='所属项目')
+    image = models.ImageField('图片', upload_to='shots/')
+    caption = models.CharField('图片说明', max_length=160, blank=True)
+    kind = models.CharField('类型', max_length=10, choices=KIND_CHOICES,
+                            default=KIND_UI)
+    order = models.PositiveIntegerField('排序', default=0)
+
+    class Meta:
+        ordering = ['order', 'id']
+        verbose_name = '实机截图 / 结果图'
+        verbose_name_plural = '实机截图 / 结果图'
+
+    def __str__(self):
+        return self.caption or (self.image.name if self.image else '未命名截图')
+
 
 class Contribution(models.Model):
     """项目中的「我的角色与主要贡献」条目。"""
