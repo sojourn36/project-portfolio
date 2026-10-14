@@ -355,7 +355,8 @@ PROJECTS = [
         ],
         'techs': ['OpenCV', 'MediaPipe', '手势识别', '实时视频处理',
                   'pycaw', 'screen_brightness_control'],
-        'video_caption': '演示视频：摄像头实时手势控制系统音量与屏幕亮度（20.6 秒，1280×720）。',
+        'video_caption': '演示视频：摄像头实时手势控制系统音量与屏幕亮度（20.6 秒，1280×720）。'
+                         '为保护个人信息，画面左侧 IDE 项目文件树已做模糊处理。',
         'video_target': 'videos/gesture-hci-demo.mp4',
         'links': [],
     },
