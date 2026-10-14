@@ -1,0 +1,193 @@
+{% extends "showcase/base.html" %}
+
+{% block title %}{{ project.title }} · {% if profile %}{{ profile.name }}{% else %}项目作品集{% endif %}{% endblock %}
+{% block description %}{{ project.summary|truncatechars:120 }}{% endblock %}
+
+{% block content %}
+
+<!-- ============ BREADCRUMB ============ -->
+<nav class="breadcrumb" aria-label="面包屑导航">
+  <div class="wrap">
+    <a href="{% url 'showcase:home' %}">首页</a>
+    <span class="sep">/</span>
+    <a href="{% url 'showcase:home' %}?category={{ project.category }}#projects">{{ project.get_category_display }}</a>
+    <span class="sep">/</span>
+    <span class="current">{{ project.title|truncatechars:28 }}</span>
+  </div>
+</nav>
+
+<article class="detail" data-cat="{{ project.category_key }}">
+
+  <!-- ============ 头部 ============ -->
+  <header class="detail-hero">
+    <div class="wrap detail-hero-inner">
+      <span class="detail-badge">{{ project.badge|default:"PRJ" }}</span>
+      <div class="detail-head-text">
+        <span class="cat-tag {{ project.category_key }}">{{ project.get_category_display }}</span>
+        <h1>{{ project.title }}</h1>
+        <p class="detail-meta">
+          {% if project.role %}<span><b>我的角色</b> {{ project.role }}</span>{% endif %}
+          {% if project.period %}<span><b>项目时间</b> {{ project.period }}</span>{% endif %}
+        </p>
+      </div>
+    </div>
+  </header>
+
+  <div class="wrap detail-layout">
+
+    <!-- ============ 左侧主内容 ============ -->
+    <div class="detail-main">
+
+      <!-- 演示视频 -->
+      <section class="block">
+        <h2 class="block-title"><span class="bar"></span>演示视频</h2>
+
+        {% if project.video_file %}
+          <div class="video-frame">
+            <video controls preload="metadata" playsinline
+                   {% if project.demo_image %}poster="{{ project.demo_image.url }}"{% endif %}>
+              <source src="{{ project.video_file.url }}">
+              您的浏览器不支持 HTML5 视频播放，请
+              <a href="{{ project.video_file.url }}">下载后观看</a>。
+            </video>
+          </div>
+
+        {% elif project.video_external_url %}
+          <div class="video-frame video-embed">
+            <iframe src="{{ project.video_external_url }}"
+                    title="{{ project.title }} 演示视频"
+                    allowfullscreen loading="lazy"></iframe>
+          </div>
+
+        {% elif project.demo_image %}
+          <div class="video-frame">
+            <img src="{{ project.demo_image.url }}" alt="{{ project.title }} 演示动图">
+          </div>
+
+        {% else %}
+          <div class="video-placeholder">
+            <span class="vp-icon">🎬</span>
+            <strong>演示视频待补充</strong>
+            <p>将视频文件放入 <code>media/videos/</code>，或在管理后台的「演示视频」字段上传，
+               页面会自动切换为播放器。</p>
+          </div>
+        {% endif %}
+
+        {% if project.video_caption %}
+          <p class="demo-caption">{{ project.video_caption }}</p>
+        {% endif %}
+      </section>
+
+      <!-- 完整介绍 -->
+      {% if project.intro %}
+      <section class="block">
+        <h2 class="block-title"><span class="bar"></span>项目介绍</h2>
+        <div class="prose">{{ project.intro|linebreaks }}</div>
+      </section>
+      {% endif %}
+
+      <!-- 主要贡献 -->
+      {% if project.contributions.all %}
+      <section class="block">
+        <h2 class="block-title"><span class="bar"></span>我的角色与主要贡献</h2>
+        <ul class="contribution-list">
+          {% for item in project.contributions.all %}
+            <li>{{ item.text }}</li>
+          {% endfor %}
+        </ul>
+      </section>
+      {% endif %}
+
+      <!-- 量化指标 -->
+      {% if project.metrics.all %}
+      <section class="block">
+        <h2 class="block-title"><span class="bar"></span>成果指标</h2>
+        <div class="metric-grid">
+          {% for metric in project.metrics.all %}
+            <div class="metric-card">
+              <span class="metric-value">{{ metric.value }}</span>
+              <span class="metric-label">{{ metric.label }}</span>
+            </div>
+          {% endfor %}
+        </div>
+      </section>
+      {% endif %}
+
+      <!-- 相关链接 -->
+      {% if project.links.all %}
+      <section class="block">
+        <h2 class="block-title"><span class="bar"></span>相关链接</h2>
+        <div class="link-list">
+          {% for link in project.links.all %}
+            {% if link.url %}
+              <a class="link-btn kind-{{ link.kind }}" href="{{ link.url }}"
+                 target="_blank" rel="noopener noreferrer">{{ link.label }} ↗</a>
+            {% else %}
+              <span class="link-btn kind-{{ link.kind }} is-static">{{ link.label }}</span>
+            {% endif %}
+          {% endfor %}
+        </div>
+      </section>
+      {% endif %}
+
+    </div>
+
+    <!-- ============ 右侧侧栏 ============ -->
+    <aside class="detail-side">
+
+      {% if project.techs.all %}
+      <section class="side-card">
+        <h3>技术栈与方法</h3>
+        <div class="tech-tags">
+          {% for tech in project.techs.all %}<span>{{ tech.name }}</span>{% endfor %}
+        </div>
+      </section>
+      {% endif %}
+
+      {% if related_projects %}
+      <section class="side-card">
+        <h3>同类项目</h3>
+        <ul class="related-list">
+          {% for item in related_projects %}
+            <li>
+              <a href="{{ item.get_absolute_url }}">
+                <span class="rel-badge">{{ item.badge|default:"PRJ" }}</span>
+                <span class="rel-title">{{ item.title|truncatechars:34 }}</span>
+              </a>
+            </li>
+          {% endfor %}
+        </ul>
+      </section>
+      {% endif %}
+
+      <section class="side-card side-nav-card">
+        <a class="side-home" href="{% url 'showcase:home' %}#projects">← 返回项目列表</a>
+      </section>
+
+    </aside>
+  </div>
+
+  <!-- ============ 上一个 / 下一个 ============ -->
+  {% if prev_project or next_project %}
+  <nav class="pager" aria-label="项目翻页">
+    <div class="wrap pager-inner">
+      {% if prev_project %}
+        <a class="pager-link pager-prev" href="{{ prev_project.get_absolute_url }}">
+          <span class="pager-dir">← 上一个</span>
+          <span class="pager-name">{{ prev_project.title|truncatechars:30 }}</span>
+        </a>
+      {% else %}<span class="pager-link is-empty"></span>{% endif %}
+
+      {% if next_project %}
+        <a class="pager-link pager-next" href="{{ next_project.get_absolute_url }}">
+          <span class="pager-dir">下一个 →</span>
+          <span class="pager-name">{{ next_project.title|truncatechars:30 }}</span>
+        </a>
+      {% else %}<span class="pager-link is-empty"></span>{% endif %}
+    </div>
+  </nav>
+  {% endif %}
+
+</article>
+
+{% endblock %}

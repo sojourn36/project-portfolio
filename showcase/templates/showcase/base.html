@@ -1,0 +1,73 @@
+{% load static %}<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}{% if profile %}{{ profile.name }}{% else %}项目作品集{% endif %}{% endblock %}</title>
+  <meta name="description" content="{% block description %}{% if profile %}{{ profile.tagline }}{% endif %}{% endblock %}">
+  <link rel="stylesheet" href="{% static 'css/style.css' %}">
+  {% block extra_head %}{% endblock %}
+</head>
+<body>
+
+<a class="skip-link" href="#main">跳到主要内容</a>
+
+<header class="site-header" id="siteHeader">
+  <div class="wrap header-inner">
+    <a class="brand" href="{% url 'showcase:home' %}">
+      <span class="brand-mark">{% if profile %}{{ profile.name|slice:":1" }}{% else %}P{% endif %}</span>
+      <span class="brand-text">
+        <strong>{% if profile %}{{ profile.name }}{% else %}项目作品集{% endif %}</strong>
+        <small>PROJECT PORTFOLIO</small>
+      </span>
+    </a>
+
+    <button class="nav-toggle" id="navToggle" type="button"
+            aria-label="打开导航菜单" aria-expanded="false" aria-controls="siteNav">
+      <span></span><span></span><span></span>
+    </button>
+
+    <nav class="site-nav" id="siteNav">
+      <a href="{% url 'showcase:home' %}#about">关于</a>
+      <a href="{% url 'showcase:home' %}#education">教育</a>
+      <a href="{% url 'showcase:home' %}#projects">项目</a>
+      <a href="{% url 'showcase:home' %}#awards">荣誉</a>
+      <a href="{% url 'showcase:home' %}#skills">技能</a>
+      <a class="nav-cta" href="{% url 'showcase:home' %}#contact">联系我</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  {% block content %}{% endblock %}
+</main>
+
+<footer class="site-footer" id="contact">
+  <div class="wrap footer-inner">
+    <div class="footer-main">
+      <h3>期待与你聊聊</h3>
+      <p>如果你在寻找一位既能理解业务、又能把 AI 方案真正落地交付的人，欢迎随时联系。</p>
+    </div>
+    <ul class="footer-contact">
+      {% if profile.phone %}
+        <li><span class="fc-label">电话</span><a href="tel:{{ profile.phone }}">{{ profile.phone }}</a></li>
+      {% endif %}
+      {% if profile.email %}
+        <li><span class="fc-label">邮箱</span><a href="mailto:{{ profile.email }}">{{ profile.email }}</a></li>
+      {% endif %}
+      {% if profile.city %}
+        <li><span class="fc-label">城市</span><span>{{ profile.city }}</span></li>
+      {% endif %}
+    </ul>
+  </div>
+  <div class="wrap footer-bottom">
+    <p>{% if profile %}{{ profile.name }}{% endif %} · 项目作品集 · 由 Django {% now "Y" %} 驱动</p>
+  </div>
+</footer>
+
+<button class="to-top" id="toTop" type="button" aria-label="回到顶部">↑</button>
+
+<script src="{% static 'js/main.js' %}"></script>
+{% block extra_js %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,243 @@
+{% extends "showcase/base.html" %}
+
+{% block title %}{% if profile %}{{ profile.name }}{% else %}项目作品集{% endif %} · 项目作品集{% endblock %}
+
+{% block content %}
+
+<!-- ==================== HERO ==================== -->
+<section class="hero">
+  <div class="wrap hero-grid">
+    <div class="hero-copy">
+      {% if profile.headline %}<span class="eyebrow">{{ profile.headline }}</span>{% endif %}
+      <h1>{{ profile.tagline|default:"让 AI 落到真实产业场景里" }}</h1>
+      {% if profile.intro %}<p class="lead">{{ profile.intro }}</p>{% endif %}
+      <div class="hero-actions">
+        <a class="btn btn-primary" href="#projects">查看项目</a>
+        <a class="btn" href="#contact">联系方式</a>
+      </div>
+    </div>
+
+    {% if facts %}
+      <aside class="hero-panel">
+        <div class="panel-head"><span class="dot"></span>Quick Profile</div>
+        <div class="fact-list">
+          {% for fact in facts %}
+            <div class="fact">
+              <span class="fact-icon ic-{{ fact.icon }}">
+                {% if fact.icon == 'teal' %}&#9679;{% elif fact.icon == 'violet' %}&#9670;{% else %}&#9632;{% endif %}
+              </span>
+              <div>
+                <b>{{ fact.title }}</b>
+                {% if fact.subtitle %}<span>{{ fact.subtitle }}</span>{% endif %}
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      </aside>
+    {% endif %}
+  </div>
+
+  {% if stats %}
+    <div class="wrap">
+      <div class="stat-row">
+        {% for stat in stats %}
+          <div class="stat-card">
+            <div class="stat-num">{{ stat.value }}</div>
+            <div class="stat-label">{{ stat.label }}</div>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+</section>
+
+<!-- ==================== 关于 ==================== -->
+<section class="section" id="about">
+  <div class="wrap">
+    <header class="section-head">
+      <span class="section-tag">About</span>
+      <h2>整体介绍</h2>
+    </header>
+
+    <div class="about-grid">
+      {% if profile.about_paragraphs %}
+        <div class="panel">
+          <h3><span class="bar"></span>我做的事</h3>
+          {% for para in profile.about_paragraphs %}
+            <p>{{ para }}</p>
+          {% endfor %}
+        </div>
+      {% endif %}
+
+      {% if pillars %}
+        <div class="panel">
+          <h3><span class="bar"></span>项目主线</h3>
+          <div class="pillar-list">
+            {% for pillar in pillars %}
+              <div class="pillar">
+                <span class="pillar-icon ic-{{ pillar.icon }}"></span>
+                <div>
+                  <b>{{ pillar.title }}</b>
+                  {% if pillar.description %}<span>{{ pillar.description }}</span>{% endif %}
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 教育 ==================== -->
+{% if educations %}
+<section class="section section-alt" id="education">
+  <div class="wrap">
+    <header class="section-head">
+      <span class="section-tag">Education</span>
+      <h2>教育背景</h2>
+    </header>
+
+    <div class="timeline">
+      {% for edu in educations %}
+        <div class="timeline-item">
+          <div class="timeline-card">
+            <div class="timeline-top">
+              <h3>{{ edu.degree }}</h3>
+              {% if edu.period %}<span class="timeline-date">{{ edu.period }}</span>{% endif %}
+            </div>
+            <div class="timeline-org">
+              {{ edu.school }}{% if edu.org %} ｜ {{ edu.org }}{% endif %}
+            </div>
+            {% if edu.description %}<p class="timeline-desc">{{ edu.description }}</p>{% endif %}
+            {% if edu.highlight_list %}
+              <div class="chips">
+                {% for item in edu.highlight_list %}
+                  <span class="chip">{{ item }}</span>
+                {% endfor %}
+              </div>
+            {% endif %}
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+{% endif %}
+
+<!-- ==================== 项目 ==================== -->
+<section class="section" id="projects">
+  <div class="wrap">
+    <header class="section-head">
+      <span class="section-tag">Projects</span>
+      <h2>项目经历</h2>
+      <p>点击任意项目进入详情页，查看完整介绍与演示视频。</p>
+    </header>
+
+    <nav class="filters" aria-label="项目分类筛选">
+      <a class="filter {% if not active_category %}is-active{% endif %}"
+         href="{% url 'showcase:home' %}#projects">全部</a>
+      {% for key, label in categories %}
+        <a class="filter {% if active_category == key %}is-active{% endif %}"
+           href="?category={{ key }}#projects">{{ label }}</a>
+      {% endfor %}
+    </nav>
+
+    {% if projects %}
+      <div class="project-grid">
+        {% for project in projects %}
+          <a class="project-card" data-cat="{{ project.category_key }}"
+             href="{{ project.get_absolute_url }}">
+            <div class="card-bar"></div>
+            <div class="card-body">
+              <div class="card-top">
+                <span class="card-badge">{{ project.badge|default:"PRJ" }}</span>
+                <span class="cat-tag {{ project.category_key }}">{{ project.get_category_display }}</span>
+              </div>
+
+              <h3 class="card-title">{{ project.title }}</h3>
+
+              <p class="card-meta">
+                {% if project.role %}<span>{{ project.role }}</span>{% endif %}
+                {% if project.period %}<span>{{ project.period }}</span>{% endif %}
+              </p>
+
+              <p class="card-summary">{{ project.summary|truncatechars:110 }}</p>
+
+              {% if project.metrics.all %}
+                <div class="card-metrics">
+                  {% for metric in project.metrics.all|slice:":2" %}
+                    <div class="mini-metric">
+                      <span class="mv">{{ metric.value }}</span>
+                      <span class="mk">{{ metric.label }}</span>
+                    </div>
+                  {% endfor %}
+                </div>
+              {% endif %}
+
+              {% if project.techs.all %}
+                <div class="card-techs">
+                  {% for tech in project.techs.all|slice:":4" %}<span>{{ tech.name }}</span>{% endfor %}
+                </div>
+              {% endif %}
+
+              <div class="card-foot">
+                <span class="card-cta">查看详情 →</span>
+                {% if project.has_video %}<span class="card-video">▶ 含演示视频</span>{% endif %}
+              </div>
+            </div>
+          </a>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="empty-hint">该分类下暂无项目。<a href="{% url 'showcase:home' %}#projects">查看全部项目</a></p>
+    {% endif %}
+  </div>
+</section>
+
+<!-- ==================== 荣誉 ==================== -->
+{% if awards %}
+<section class="section section-alt" id="awards">
+  <div class="wrap">
+    <header class="section-head">
+      <span class="section-tag">Honors</span>
+      <h2>科研成果与竞赛荣誉</h2>
+    </header>
+    <div class="award-grid">
+      {% for award in awards %}
+        <div class="award-card">
+          <span class="award-icon">{{ award.icon }}</span>
+          <div>
+            <strong>{{ award.title }}</strong>
+            {% if award.detail %}<span class="award-detail">{{ award.detail }}</span>{% endif %}
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+{% endif %}
+
+<!-- ==================== 技能 ==================== -->
+{% if skill_groups %}
+<section class="section" id="skills">
+  <div class="wrap">
+    <header class="section-head">
+      <span class="section-tag">Skills</span>
+      <h2>技能清单</h2>
+    </header>
+    <div class="skill-grid">
+      {% for group in skill_groups %}
+        <div class="skill-card">
+          <h4>{{ group.name }}</h4>
+          <div class="skill-tags">
+            {% for item in group.item_list %}<span>{{ item }}</span>{% endfor %}
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+{% endif %}
+
+{% endblock %}
