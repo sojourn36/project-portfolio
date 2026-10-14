@@ -126,8 +126,8 @@ project-portfolio/
 │   ├── models.py                    # 数据模型
 │   ├── views.py                     # home() 首页聚合 + detail() 详情页
 │   ├── urls.py                      # 应用路由（app_name = showcase）
-│   ├── admin.py                     # 后台管理（项目含 4 个内联表）
-│   ├── tests.py                     # 19 项冒烟测试
+│   ├── admin.py                     # 后台管理（项目含 5 个内联表）
+│   ├── tests.py                     # 24 项冒烟测试
 │   ├── migrations/
 │   ├── management/commands/
 │   │   └── seed_projects.py         # 数据导入命令（支持 --reset）
@@ -246,8 +246,8 @@ python manage.py test showcase -v 2
 ```
 
 覆盖范围：seed 数据完整性、模型属性（分段 / 关键词拆分）、首页各锚点渲染、
-分类筛选与非法分类回退、空态提示、6 个详情页渲染、视频嵌入、翻页与同类推荐、
-404、后台登录保护。
+分类筛选与非法分类回退、空态提示、6 个详情页渲染、视频嵌入、
+实机图集渲染与「无截图时不渲染」、截图排序、翻页与同类推荐、404、后台登录保护。
 
 ---
 
