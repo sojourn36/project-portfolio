@@ -308,7 +308,9 @@ PROJECTS = [
         ],
         'techs': ['YOLOv8 / Ultralytics', 'PyQt5', 'OpenCV', '目标跟踪',
                   'pyecharts', 'PyTorch', '模型训练与评估'],
-        'video_caption': '演示视频：YOLOv8 检测 + 跨帧目标跟踪的实际输出（25 秒，1280×720）。',
+        'video_caption': '演示视频：YOLOv8 检测 + 跨帧目标跟踪的实际输出'
+                         '（25 秒，1280×720）。为保护画面中的人物隐私，'
+                         '人体区域已做强模糊、类别名统一替换为 person。',
         'video_target': 'videos/renwujiance-demo.mp4',
         'links': [
             (ProjectLink.KIND_OTHER, '桌面端：多路摄像头管理 + 检测播放', ''),
@@ -317,7 +319,8 @@ PROJECTS = [
         'shots': [
             ('shots/yolov8-detection-desktop/01-desktop-gui.png', ProjectShot.KIND_GUI,
              'PyQt5 桌面端主界面：多路摄像头增删管理、图片 / 视频检测、'
-             '检测画面实时播放与检测结果地图布点。'),
+             '检测画面实时播放与检测结果地图布点。'
+             '画面中的人物区域已做强模糊处理，仅保留检测框与轨迹。'),
         ],
     },
 
