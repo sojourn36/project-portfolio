@@ -7,7 +7,7 @@
 """
 
 from django.core.management import call_command
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from .models import (
@@ -203,6 +203,22 @@ class SeedDataTestCase(TestCase):
 
     def test_detail_unknown_slug_returns_404(self):
         self.assertEqual(self.client.get('/project/does-not-exist/').status_code, 404)
+
+    @override_settings(DEBUG=False)
+    def test_custom_404_page_when_debug_off(self):
+        """DEBUG=False 时应渲染自定义 404 页（含站内导航与联系方式）。"""
+        response = self.client.get('/project/does-not-exist/')
+        self.assertEqual(response.status_code, 404)
+        html = response.content.decode()
+        self.assertIn('notfound-box', html)
+        self.assertIn('这个页面不存在', html)
+        # 四个回主入口的链接
+        for anchor in ('#projects', '#about', '#contact'):
+            self.assertIn('href="/%s"' % anchor, html)
+        # 页头拿到 profile，不退化成占位文案
+        self.assertIn('PROJECT PORTFOLIO', html)
+        # 页脚邮箱来自 Profile，说明 profile 确实传进去了
+        self.assertIn(Profile.objects.first().email, html)
 
     # ---------- 后台 ----------
     def test_admin_requires_login(self):

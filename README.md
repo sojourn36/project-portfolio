@@ -56,9 +56,9 @@
   均在 Django Admin 中维护，无需改代码；项目下的五类明细用内联表格批量编辑。
 - **响应式布局** — 桌面端 / 平板 / 移动端三档断点，移动端为汉堡菜单 + 单列布局。
 - **零前端依赖** — 原生 HTML / CSS / JavaScript，无框架、无 CDN，**可完全离线运行**。
-- **26 项自动化测试** — 覆盖首页各区块、分类筛选与非法参数回退、空态提示、
+- **27 项自动化测试** — 覆盖首页各区块、分类筛选与非法参数回退、空态提示、
   6 个详情页渲染、视频嵌入、实机图集渲染与空态、卡片封面取值优先级、
-  翻页与同类推荐、404、后台登录保护。
+  翻页与同类推荐、404（含自定义 404 页）、后台登录保护。
 
 ---
 
@@ -133,17 +133,19 @@ project-portfolio/
 │   └── wsgi.py
 ├── showcase/                        # 核心应用
 │   ├── models.py                    # 数据模型
-│   ├── views.py                     # home() 首页聚合 + detail() 详情页
+│   ├── views.py                     # home() 首页聚合 + detail() 详情页 + page_not_found()
 │   ├── urls.py                      # 应用路由（app_name = showcase）
 │   ├── admin.py                     # 后台管理（项目含 5 个内联表）
-│   ├── tests.py                     # 26 项冒烟测试
+│   ├── tests.py                     # 27 项冒烟测试
 │   ├── migrations/
 │   ├── management/commands/
 │   │   └── seed_projects.py         # 数据导入命令（支持 --reset）
-│   └── templates/showcase/
-│       ├── base.html                # 公共骨架（导航锚点 / 页脚联系）
-│       ├── home.html                # 首页
-│       └── detail.html              # 详情页
+│   └── templates/
+│       ├── 404.html                 # 自定义 404（DEBUG=False 时生效）
+│       └── showcase/
+│           ├── base.html            # 公共骨架（导航锚点 / 页脚联系）
+│           ├── home.html            # 首页
+│           └── detail.html          # 详情页
 ├── static/
 │   ├── favicon.svg                  # 站点图标（SVG，与页头 brand-mark 同款渐变）
 │   ├── css/style.css                # 全部样式（含响应式断点）
@@ -165,6 +167,7 @@ project-portfolio/
 | `/` | `showcase:home` | 首页，列出全部项目与各介绍区块 |
 | `/?category=<key>` | `showcase:home` | 按分类筛选 |
 | `/project/<slug>/` | `showcase:detail` | 项目详情页（演示视频 + 实机截图 + 翻页 + 同类推荐） |
+| 任意未匹配地址 | `showcase:page_not_found` | 自定义 404 页（仅在 `DJANGO_DEBUG=0` 时生效） |
 | `/admin/` | Django Admin | 后台管理 |
 
 分类键：`materials`（AI × 材料）、`transit`（轨道交通）、
@@ -275,7 +278,7 @@ python manage.py test showcase -v 2
 覆盖范围：seed 数据完整性、模型属性（分段 / 关键词拆分）、首页各锚点渲染、
 分类筛选与非法分类回退、空态提示、卡片封面取值优先级与「6 张卡片均有封面」、
 6 个详情页渲染、视频嵌入、实机图集渲染与「无截图时不渲染」、截图排序、
-翻页与同类推荐、404、后台登录保护。
+翻页与同类推荐、404 与自定义 404 页（`override_settings(DEBUG=False)`）、后台登录保护。
 
 ---
 

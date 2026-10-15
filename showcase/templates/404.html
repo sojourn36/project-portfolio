@@ -1,0 +1,31 @@
+{% extends "showcase/base.html" %}
+
+{% block title %}页面不存在 · {% if profile %}{{ profile.name }}{% else %}项目作品集{% endif %}{% endblock %}
+{% block description %}这个页面不存在 —— 链接可能已经失效，或者地址输错了一个字符。{% endblock %}
+
+{% block content %}
+<section class="section notfound">
+  <div class="wrap">
+    <div class="notfound-box">
+      <span class="notfound-code">404</span>
+      <h1>这个页面不存在</h1>
+      <p class="notfound-lead">
+        链接可能已经失效，或者地址输错了一个字符。<br>
+        下面的入口应该能带你回到正题：
+      </p>
+      <div class="notfound-links">
+        <a class="btn btn-primary" href="{% url 'showcase:home' %}">回到首页</a>
+        <a class="btn" href="{% url 'showcase:home' %}#projects">项目经历</a>
+        <a class="btn" href="{% url 'showcase:home' %}#about">关于我</a>
+        <a class="btn" href="{% url 'showcase:home' %}#contact">联系方式</a>
+      </div>
+      {% if profile.email %}
+        <p class="notfound-mail">
+          也可以直接写信到
+          <a href="mailto:{{ profile.email }}">{{ profile.email }}</a>
+        </p>
+      {% endif %}
+    </div>
+  </div>
+</section>
+{% endblock %}

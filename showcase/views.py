@@ -1,4 +1,4 @@
-"""视图：首页项目列表 + 项目详情页。"""
+"""视图：首页项目列表 + 项目详情页 + 自定义 404。"""
 
 from django.shortcuts import render, get_object_or_404
 
@@ -64,3 +64,13 @@ def detail(request, slug):
         'categories': Project.CATEGORY_CHOICES,
     }
     return render(request, 'showcase/detail.html', context)
+
+
+def page_not_found(request, exception):
+    """自定义 404。
+
+    只在 ``DEBUG=False`` 时生效（DEBUG 打开时 Django 显示调试页）。
+    这里显式传 ``profile``，否则 base.html 的页头会退化成占位文案。
+    """
+    return render(request, '404.html',
+                  {'profile': Profile.objects.first()}, status=404)

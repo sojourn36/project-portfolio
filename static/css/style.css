@@ -277,6 +277,27 @@ code { font-family: var(--mono); font-size: .88em; background: var(--line-soft);
 .empty-hint { padding: 40px 0; text-align: center; color: var(--muted); }
 .empty-hint a { color: var(--brand); font-weight: 650; text-decoration: underline; }
 
+/* ---------- 404 ---------- */
+.notfound { min-height: 62vh; display: flex; align-items: center; }
+.notfound-box {
+  max-width: 620px; margin: 0 auto; text-align: center;
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 52px 34px; box-shadow: var(--shadow-sm);
+}
+.notfound-code {
+  display: inline-block; font-size: 3.4rem; font-weight: 850; line-height: 1;
+  letter-spacing: .04em; margin-bottom: 14px;
+  background: linear-gradient(135deg, var(--brand), #38bdf8 55%, var(--c-materials));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.notfound-box h1 { font-size: clamp(1.3rem, 3vw, 1.7rem); color: var(--ink); }
+.notfound-lead { margin-top: 12px; color: var(--muted); font-size: .93rem; line-height: 1.85; }
+.notfound-links {
+  margin-top: 26px; display: flex; flex-wrap: wrap; gap: 10px; justify-content: center;
+}
+.notfound-mail { margin-top: 22px; font-size: .85rem; color: var(--muted-2); }
+.notfound-mail a { color: var(--brand); font-weight: 650; }
+
 /* ==========================================================================
    荣誉 / 技能
    ========================================================================== */

@@ -18,3 +18,6 @@ if settings.DEBUG:
 admin.site.site_header = '作品集管理后台'
 admin.site.site_title = '作品集管理'
 admin.site.index_title = '内容管理'
+
+# 自定义 404（仅在 DEBUG=False 时生效）
+handler404 = 'showcase.views.page_not_found'
