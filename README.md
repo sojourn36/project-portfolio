@@ -23,6 +23,10 @@
 </p>
 
 <p align="center">
+  <img src="docs/screenshots/home-awards-skills.png" width="100%" alt="科研成果与竞赛荣誉、技能清单与页脚联系方式">
+</p>
+
+<p align="center">
   <img src="docs/screenshots/project-detail.png" width="100%" alt="项目详情页：演示视频、实机运行图集、介绍、贡献、指标与翻页">
 </p>
 
