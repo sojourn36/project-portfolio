@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{% block title %}{% if profile %}{{ profile.name }}{% else %}项目作品集{% endif %}{% endblock %}</title>
   <meta name="description" content="{% block description %}{% if profile %}{{ profile.tagline }}{% endif %}{% endblock %}">
+  <link rel="icon" type="image/svg+xml" href="{% static 'favicon.svg' %}">
   <link rel="stylesheet" href="{% static 'css/style.css' %}">
   {% block extra_head %}{% endblock %}
 </head>

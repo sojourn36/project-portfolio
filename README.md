@@ -144,6 +144,7 @@ project-portfolio/
 │       ├── home.html                # 首页
 │       └── detail.html              # 详情页
 ├── static/
+│   ├── favicon.svg                  # 站点图标（SVG，与页头 brand-mark 同款渐变）
 │   ├── css/style.css                # 全部样式（含响应式断点）
 │   └── js/main.js                   # 移动端菜单 / 滚动状态 / 回到顶部
 ├── media/
