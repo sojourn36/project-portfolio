@@ -301,14 +301,27 @@ python manage.py test showcase -v 2
 
    | 变量 | 说明 |
    |---|---|
-   | `DJANGO_SECRET_KEY` | 密钥，务必更换 |
+   | `DJANGO_SECRET_KEY` | 密钥，**务必更换**（保持 `django-insecure-` 前缀会被 `check --deploy` 判为 W009） |
    | `DJANGO_DEBUG` | 设为 `0` 关闭调试 |
    | `DJANGO_ALLOWED_HOSTS` | 逗号分隔的域名列表 |
    | `DJANGO_SECURE_SSL_REDIRECT` | 已由反向代理终止 TLS 时设为 `0` |
+   | `DJANGO_HSTS_PRELOAD` | 默认开启；不想被浏览器 HSTS 预加载列表收录时设为 `0` |
 
-   `DJANGO_DEBUG=0` 时会自动启用 HSTS、Secure Cookie、`X_FRAME_OPTIONS=DENY` 等安全项。
+   `DJANGO_DEBUG=0` 时会自动启用 HSTS（1 年 + 含子域 + preload 指令）、
+   Secure Cookie、`X_FRAME_OPTIONS=DENY`、`SECURE_CONTENT_TYPE_NOSNIFF` 等安全项。
 
-2. **收集静态文件**：`python manage.py collectstatic`
+   > **本地想验证生产配置**：`DJANGO_DEBUG=0` 下 `SECURE_SSL_REDIRECT` 默认为开，
+   > http 会被 301 到 https。本地看页面需同时设 `DJANGO_SECURE_SSL_REDIRECT=0`，
+   > 并给 `runserver` 加 `--insecure`（否则 `DEBUG=False` 时静态文件不由 Django 提供）。
+   >
+   > ```bash
+   > DJANGO_DEBUG=0 DJANGO_SECURE_SSL_REDIRECT=0 python manage.py runserver --insecure
+   > ```
+
+   配置完成后可用 `python manage.py check --deploy` 自检：
+   注入合规的随机密钥后应输出 **`no issues`**（本项目已实测通过）。
+
+2. **收集静态文件**：`python manage.py collectstatic`（实测 131 个文件）
 
 3. **换用生产数据库**：把 `DATABASES` 切到 PostgreSQL 等，并重新执行 `migrate` + `seed_projects`。
 

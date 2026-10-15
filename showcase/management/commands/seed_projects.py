@@ -68,7 +68,8 @@ PROJECTS = [
                  '系统支持 PDF、Word、Excel 及扫描件 OCR 的批量解析入库，并提供受控编排层把三类来源组合成'
                  '可追溯的调查结果；证据与预测分层展示，越界成分会被直接拒绝。',
         'video_caption': '演示动图：本地文献 RAG 与专家模型的受控编排流程（确定性演示，非实时录屏）。',
-        'demo_source': r'D:\pycharm\RAG\ExperimentPilot_AI\docs\assets\experimentpilot_demo.gif',
+        # 素材本体已随仓库发布在 media/demos/ 下，这里只写相对路径。
+        # 不设 demo_source —— 那会写死本机的绝对路径，换台机器必然失效。
         'demo_target': 'demos/experimentpilot-demo.gif',
         'contributions': [
             '设计「SQLite 结构化数据 — Chroma/Qwen3 文献证据 — FastAPI 专家预测」三层编排，'

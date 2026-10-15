@@ -130,5 +130,8 @@ if not DEBUG:
     X_FRAME_OPTIONS = 'DENY'
     SECURE_HSTS_SECONDS = 31536000
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    # HSTS preload 指令：只有带上它，域名才能被提交到浏览器的预加载列表
+    # （属强承诺，一旦收录撤销很慢）。不想用可设 DJANGO_HSTS_PRELOAD=0。
+    SECURE_HSTS_PRELOAD = os.environ.get('DJANGO_HSTS_PRELOAD', '1') == '1'
     # 若前置了反向代理并已终止 TLS，可设 DJANGO_SECURE_SSL_REDIRECT=0 关闭
     SECURE_SSL_REDIRECT = os.environ.get('DJANGO_SECURE_SSL_REDIRECT', '1') == '1'
