@@ -72,6 +72,7 @@
 | 模板 | Django Template Language |
 | 前端 | 原生 HTML5 / CSS3（变量 + Grid + Flex）/ ES6，无任何第三方依赖 |
 | 媒体服务 | Django `MEDIA_URL` / `MEDIA_ROOT` 静态媒体托管 |
+| 图片处理 | Pillow（Django `ImageField` 的硬依赖，缺则 `migrate` 报 `fields.E210`） |
 | 测试 | Django `TestCase` |
 
 ---

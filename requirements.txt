@@ -1,1 +1,6 @@
+# 作品集站点运行依赖
+# 注意：Project.cover_image / demo_image / ProjectShot.image 都是 ImageField，
+# 而 Django 的 ImageField 强依赖 Pillow —— 缺了它 migrate 会直接报
+# fields.E210: Cannot use ImageField because Pillow is not installed
 Django>=3.2,<4.0
+Pillow>=8.0
