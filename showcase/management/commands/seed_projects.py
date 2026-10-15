@@ -312,6 +312,11 @@ PROJECTS = [
                          '（25 秒，1280×720）。为保护画面中的人物隐私，'
                          '人体区域已做强模糊、类别名统一替换为 person。',
         'video_target': 'videos/renwujiance-demo.mp4',
+        # 视频海报帧：取自演示视频第 240 帧的真实输出，非另行摆拍
+        'demo_target': 'demos/renwujiance-poster.jpg',
+        # 卡片封面单独指定：GUI 全图顶部是大面积户型图，卡片尺寸下辨识度低，
+        # 改用同一演示视频里的检测输出帧（车辆 + 已脱敏行人 + 检测框 / 跟踪 ID）
+        'cover_target': 'covers/renwujiance-cover.jpg',
         'links': [
             (ProjectLink.KIND_OTHER, '桌面端：多路摄像头管理 + 检测播放', ''),
             (ProjectLink.KIND_OTHER, '检测结果地图可视化（pyecharts）', ''),
@@ -358,6 +363,11 @@ PROJECTS = [
         'video_caption': '演示视频：摄像头实时手势控制系统音量与屏幕亮度（20.6 秒，1280×720）。'
                          '为保护个人信息，画面左侧 IDE 项目文件树已做模糊处理。',
         'video_target': 'videos/gesture-hci-demo.mp4',
+        # 视频海报帧：取自演示视频第 330 帧的真实输出（手部关键点骨架 + 音量条）
+        'demo_target': 'demos/gesture-hci-poster.jpg',
+        # 卡片封面单独指定：裁到 MediaPipe Hands 摄像头窗口，去掉左侧 IDE 栏
+        # （该区域为已模糊的项目文件树与本人源码，卡片尺寸下只会是灰糊一片）
+        'cover_target': 'covers/gesture-hci-cover.jpg',
         'links': [],
     },
 ]
@@ -514,6 +524,8 @@ class Command(BaseCommand):
             video_target = data.pop('video_target', None)
             demo_source = data.pop('demo_source', None)
             demo_target = data.pop('demo_target', None)
+            cover_source = data.pop('cover_source', None)
+            cover_target = data.pop('cover_target', None)
             shots = data.pop('shots', [])
 
             project = Project.objects.create(**data)
@@ -533,6 +545,8 @@ class Command(BaseCommand):
                 self.stdout.write('  视频: {}'.format(video_target))
             if _attach(project, 'demo_image', demo_target, demo_source, media_root):
                 self.stdout.write('  动图: {}'.format(demo_target))
+            if _attach(project, 'cover_image', cover_target, cover_source, media_root):
+                self.stdout.write('  封面: {}'.format(cover_target))
 
             # 实机截图 / 结果图
             n_shots = 0

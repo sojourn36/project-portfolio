@@ -149,6 +149,13 @@
           <a class="project-card" data-cat="{{ project.category_key }}"
              href="{{ project.get_absolute_url }}">
             <div class="card-bar"></div>
+            {% if project.cover_image_url %}
+              <div class="card-cover">
+                <img src="{{ project.cover_image_url }}" loading="lazy"
+                     alt="{{ project.cover_caption|truncatechars:80 }}">
+                <span class="card-cover-tag">{{ project.get_category_display }}</span>
+              </div>
+            {% endif %}
             <div class="card-body">
               <div class="card-top">
                 <span class="card-badge">{{ project.badge|default:"PRJ" }}</span>

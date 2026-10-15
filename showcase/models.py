@@ -57,6 +57,10 @@ class Project(models.Model):
     video_caption = models.CharField('视频说明', max_length=200, blank=True)
     demo_image = models.ImageField('演示动图 / 截图', upload_to='demos/', blank=True, null=True,
                                    help_text='没有视频时可放 GIF 动图')
+    cover_image = models.ImageField('列表封面图（可选）', upload_to='covers/', blank=True, null=True,
+                                    help_text='首页卡片封面。留空则自动取第一张实机截图，'
+                                              '再退到演示动图；两者都无则不显示封面。'
+                                              '用于「第一张截图不适合当封面」时手工指定。')
 
     created_at = models.DateTimeField('创建时间', auto_now_add=True)
     updated_at = models.DateTimeField('更新时间', auto_now=True)
@@ -89,6 +93,33 @@ class Project(models.Model):
     def has_shots(self):
         """是否配置了实机截图 / 结果图。"""
         return bool(self.shots.exists()) if self.pk else False
+
+    @property
+    def cover_image_url(self):
+        """列表卡片封面图地址。
+
+        优先级：显式指定的 ``cover_image`` → 第一张实机截图 → 演示动图 → 空串
+        （模板据此决定是否渲染封面）。
+        注意：调用方应先 ``prefetch_related('shots')``，否则每个项目多一次查询。
+        """
+        if self.cover_image:
+            return self.cover_image.url
+        shot = self.shots.first() if self.pk else None
+        if shot and shot.image:
+            return shot.image.url
+        if self.demo_image:
+            return self.demo_image.url
+        return ''
+
+    @property
+    def cover_caption(self):
+        """封面图的替代文字：显式封面图 → 截图说明 → 项目名。"""
+        if self.cover_image:
+            return '{} 封面图'.format(self.title)
+        shot = self.shots.first() if self.pk else None
+        if shot and shot.caption:
+            return shot.caption
+        return self.title
 
 
 class ProjectShot(models.Model):

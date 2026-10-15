@@ -65,10 +65,12 @@ class ProjectAdmin(admin.ModelAdmin):
         ('文案', {
             'fields': ('summary', 'intro')
         }),
-        ('演示视频', {
-            'fields': ('video_file', 'video_external_url', 'video_caption', 'demo_image'),
+        ('演示素材', {
+            'fields': ('video_file', 'video_external_url', 'video_caption',
+                       'demo_image', 'cover_image'),
             'description': '优先播放上传的视频文件；若只填外部链接则用 iframe 嵌入；'
                            '都没有时展示占位提示。'
+                           '「列表封面图」留空时自动取第一张实机截图、再退到演示动图。'
         }),
         ('实机截图 / 结果图', {
             'fields': (),

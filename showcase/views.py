@@ -14,7 +14,8 @@ def home(request):
     if active_category not in valid_categories:
         active_category = ''
 
-    projects = Project.objects.all()
+    projects = (Project.objects
+                .prefetch_related('contributions', 'metrics', 'techs', 'shots'))
     if active_category:
         projects = projects.filter(category=active_category)
 

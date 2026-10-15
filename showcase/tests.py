@@ -162,6 +162,34 @@ class SeedDataTestCase(TestCase):
         first = project.shots.first()
         self.assertTrue(str(first))  # __str__ 回退到 caption / 文件名，不应报错
 
+    # ---------- 列表卡片封面 ----------
+    def test_cover_image_priority(self):
+        """封面优先级：显式 cover_image → 第一张实机截图 → 演示动图 → 空串。"""
+        # 1) 显式指定封面时用它
+        gesture = Project.objects.get(slug='gesture-hci')
+        self.assertTrue(gesture.cover_image)
+        self.assertIn('covers/gesture-hci-cover.jpg', gesture.cover_image_url)
+        # 2) 未指定封面时回落到第一张实机截图
+        ep = Project.objects.get(slug='experimentpilot-ai')
+        self.assertFalse(ep.cover_image)
+        self.assertIn('shots/experimentpilot-ai/01-structured-records.png',
+                      ep.cover_image_url)
+        # 3) 都没有时返回空串，模板据此不渲染封面
+        bare = Project.objects.create(
+            title='无素材项目', slug='no-media-demo',
+            category=Project.CATEGORY_DELIVERY, summary='测试封面兜底链。')
+        self.assertEqual(bare.cover_image_url, '')
+
+    def test_home_renders_card_covers(self):
+        response = self.client.get('/')
+        html = response.content.decode()
+        # 6 个项目全部有封面（截图或显式封面图）
+        self.assertEqual(html.count('class="card-cover"'), Project.objects.count())
+        self.assertIn('covers/gesture-hci-cover.jpg', html)
+        self.assertIn('covers/renwujiance-cover.jpg', html)
+        # 封面右下角渲染分类角标（卡内重复的分类标签由 CSS 隐藏）
+        self.assertIn('card-cover-tag', html)
+
     def test_detail_pager_links(self):
         response = self.client.get('/project/femnsic-fatigue-optimization/')
         self.assertEqual(response.context['prev_project'].slug, 'experimentpilot-ai')
