@@ -202,7 +202,8 @@ project-portfolio/
         ├── audit_page.js            # 单页体检（控制台报错 / 404 / 裂图 / 横向溢出 / 传输量）
         ├── linkcheck.js             # 全站爬取（逐页状态码 + 标题）
         ├── video_probe.js           # 浏览器里验证视频进度条能不能拖（Range 是否真生效）
-        └── csp_probe.js             # 浏览器里验证 CSP 真拦住了什么（带对照组）
+        ├── csp_probe.js             # 浏览器里验证 CSP 真拦住了什么（带对照组）
+        └── control_page.py          # 故意做坏的对照页（证明上面这些工具真的抓得到问题）
 ```
 
 ---
@@ -527,9 +528,39 @@ node docs/tools/csp_probe.js --url http://127.0.0.1:8765/ --expect blocked
 ### 工具自己也要被验证
 
 一个「零缺陷」的报告，如果没验证过工具有抓取能力，**等于什么都没说**。
-所以用一个**故意做坏**的页面做反向对照 —— 缺 `alt` 的图 + 指向 404 的图 +
-2400px 宽的 `div` + 空 `button` + 一句 `console.error` —— 确认 6 类缺陷全部被抓到、
-退出码为 `1`，这个脚本才算可信。
+
+`docs/tools/control_page.py` 就是干这个的：一个零依赖的本地 HTTP 服务，
+提供四个**故意做坏 / 刻意设好**的页面，每个只测一件事。
+
+```bash
+python docs/tools/control_page.py 8899
+```
+
+| 路径 | 该页设的 CSP | 期望 | 实际 |
+|---|---|---|---|
+| `/bad.html` | 不设头 | 6 类缺陷全中，退出码 `1` | ✅ `1` |
+| `/good.html` | `script-src 'self'` | 0 缺陷、0 被挡，退出码 `0` | ✅ `0` |
+| `/blocked.html` | `script-src 'none'` | 同源被挡 = 真缺陷，退出码 `1` | ✅ `1` |
+| `/crossonly.html` | `script-src 'self'` | 跨域被挡**不计**缺陷，退出码 `0` | ✅ `0` |
+
+`/bad.html` 一次命中 6 类：缺 `alt` 的图、指向 404 的图、2400px 宽的 `div`
+（1440 视口下溢出 968px）、空 `button`、一句 `console.error`、一次打到 404 的 `fetch`。
+
+> **夹具本身也踩过一次坑**：最初把 `console.error(...)` 写在 `/bad.html` 的
+> **内联脚本**里，而那个页面又设了 `script-src 'none'` —— 内联脚本被拦，
+> `console.error` 压根没执行，「控制台报错」这一类缺陷**从未被覆盖到**，
+> 可报告看起来一切正常。**一个被自己拦掉的夹具，测不出它想测的东西。**
+> 所以最后拆成四页，各测各的。
+
+> **`audit_page.js` 的判定也据此改过一次**：加了 CSP 之后，被拦下的资源原本
+> 混在 `log_errors` / `request_failures` 里，于是「CSP 按预期工作」和「页面真坏了」
+> 在结论上完全一样 —— 站点永远判为失败，报告就没人看了。
+> 现在按来源三分流：**跨域被拦不计缺陷**（`[i]` 提示）、**同源被拦计入缺陷**（`[!]`）、
+> 文本里取不到资源 URL 的（多为内联脚本）单列为「来源无法判定」并提示人工确认。
+> 被拦请求的 URL 取不到（不会有 `responseReceived`），因此在
+> `Network.requestWillBeSent` 时就要按 `requestId` 存下来。
+> 这里还修掉过一个假阳性：日志行格式是 `<text> @ <页面URL>`，
+> 用「第一个 http 链接」去取会把**页面自己**当成被拦资源，从而误判成同源。
 
 > 同一类错误也发生在 `linkcheck.js` 身上：它的链接正则最初写成
 > `href\s*=\s*["']([^"'#]+)["']`，字符类里排除了 `#`。结果
@@ -548,6 +579,11 @@ node docs/tools/csp_probe.js --url http://127.0.0.1:8765/ --expect blocked
 | `<img>` 缺 alt / 裂图 | 0 / 0 |
 | 无标签可点击元素 | 0 |
 | 横向溢出 | 0px |
+| 被策略拦下的记录 | 3（跨域 2 · 同源 **0** · 来源无法判定 1）→ **不计缺陷** |
+
+> 最后一行是加了 CSP 之后新增的一类。**同源 0 才是重点** ——
+> 它说明策略没有把自己的任何资源拦掉；跨域那几条正是平台注入的 beacon
+> 被挡下的记录，属于策略在按预期工作（详见「工具自己也要被验证」一节）。
 
 ---
 
@@ -787,9 +823,20 @@ beacon 依旧会加载 —— 它只在主人自己登录后台时触发，不�
 
 **换成正式域名后**，把这两个值配上即可，分享卡片与 sitemap 会自动跟着换。
 
-> **CSP 尚未上线。** `showcase/middleware.py` 的 CSP 已提交，并已通过本地浏览器
-> 实测（对照组 / 实验组见上表），但**还没有重新发布** —— 所以当前线上站点依然带着
-> 平台注入的埋点。重新发布后本节需要同步更新。
+**CSP 已上线**（2026-10-16 重新发布后实测）：
+
+| 项目 | 线上实测 |
+|---|---|
+| 响应头 | `Content-Security-Policy: default-src 'self'; script-src 'self'; …; frame-ancestors 'none'; upgrade-insecure-requests` |
+| 平台注入的 beacon | 浏览器里 `false`（未加载），日志 2 条 `security: … The action has been blocked.` |
+| 浏览器发出的 beacon 请求 | 0 次（`blockedReason: csp`） |
+| 页面自身 `main.js` | alive（没被误伤） |
+| 首屏传输量 | **69 KB**（此前 80 KB —— 差的那 ~10 KB 就是被拦下的 beacon） |
+
+> 一个必须说清的细节：**HTML 源码里那段 `<script>` 标签依然在**（线上仍是
+> 30877 字节、3 处 `beacon`），CSP 拦的是**执行**，不是删除标签。
+> 所以「grep 线上 HTML 找不到 beacon」是个**错误的验收标准** ——
+> 要验的是浏览器行为（脚本有没有加载、请求有没有发出去）。
 
 线上实测（2026-10-16，发布后逐条核验）：
 
@@ -802,7 +849,10 @@ beacon 依旧会加载 —— 它只在主人自己登录后台时触发，不�
 | 演示视频完整下载 | 2,333,314 字节，sha256 与本地一致 |
 | 自定义 404 页 | 标题「页面不存在 · 王猛」，无 Django 调试标记 |
 | `/admin/` | `302` → `/admin/login/`（未登录不可见后台） |
-| `X-Frame-Options` | `DENY`（确认 `DEBUG=False`） |
+| `X-Frame-Options` | `DENY`（确认 `DEBUG=False`，即 `deploy/start.sh` 真的执行了） |
+| CSP 响应头 | 与本地一致，含 `upgrade-insecure-requests`（说明代理转发的原始协议被正确识别） |
+| 平台注入的 beacon | 浏览器里未加载、请求未发出；`csp_probe.js` 报 4 条违规（其中 2 条正是平台那一对） |
+| 首屏传输量 | 69 KB（拦下 beacon 前为 80 KB） |
 | 隐私复查 | 本地仓库（含 `db.sqlite3` 二进制）与线上 14 个地址均**无手机号** |
 
 ---

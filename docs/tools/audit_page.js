@@ -11,7 +11,7 @@
  * 检查项
  * ------
  *   1. 控制台 error / warning（Runtime.consoleAPICalled）
- *   2. 浏览器日志里的 error（Log.entryAdded，含网络/CSP/混合内容）
+ *   2. 浏览器日志里的 error（Log.entryAdded，含网络/混合内容）
  *   3. 请求失败（Network.loadingFailed）与 HTTP >= 400 的响应
  *   4. 未捕获异常（Runtime.exceptionThrown）
  *   5. DOM 体检：
@@ -20,6 +20,20 @@
  *      - 视口宽下的横向溢出（scrollWidth > clientWidth），列出具体越界元素
  *      - 无文本的可点击元素缺 aria-label / title（无障碍）
  *   6. 页面重量：按 MIME 分类统计真实传输字节，列出最重的 5 个资源
+ *
+ * 被策略拦下的资源**单独一类，默认不算缺陷**
+ * ------------------------------------------
+ * 站点加了 CSP 之后，「拦下一个跨域脚本」是**策略在按预期工作**，
+ * 不是页面缺陷。如果把它混进 log_errors / request_failures，就会出现
+ * 「CSP 生效」和「页面真坏了」在结论上完全一样 —— 站点永远判为失败，
+ * 报告就没人看了。
+ *
+ * 所以按来源分流：
+ *   · 跨域被拦 → 计入 blocked_requests / csp_blocked，摘要用 [i] 提示，**不影响退出码**
+ *   · 同源被拦 → 说明策略把自己的脚本/样式挡了，是真缺陷，计入 hardErrors
+ * 判定「同源」靠从日志文本里抠出被拦资源的 URL 与页面 origin 比对；
+ * 被拦请求的 URL 取不到（不会有 responseReceived），因此在
+ * Network.requestWillBeSent 时就要把它按 requestId 存下来。
  *
  * 用法
  * ----
@@ -196,6 +210,9 @@ async function main() {
       url: opt.url, viewport: { width: opt.width, height: opt.height },
       console_errors: [], console_warnings: [], log_errors: [],
       request_failures: [], http_errors: [], exceptions: [],
+      // CSP / 其他策略拦下的资源。**不计入缺陷**（见下面的判定），
+      // 但必须报出来 —— 拦到同源资源就说明策略把自己的东西挡了。
+      csp_blocked: [], blocked_requests: [],
       dom: { images_missing_alt: [], images_broken: [], horizontal_overflow: [],
              unlabeled_controls: [], title: '', text_length: 0 },
       weight: { total_bytes: 0, by_type: {}, heaviest: [] },
@@ -204,6 +221,10 @@ async function main() {
     // 传输字节：Network.responseReceived 给类型，loadingFinished 给 encodedDataLength。
     // 按 requestId 关联，才能知道「哪个类型占了多重」。
     const reqMeta = new Map();
+    // requestId → URL。被策略拦下的请求**不会有 responseReceived**，
+    // 只在 loadingFailed 里给一个 requestId，所以 URL 必须提前在
+    // requestWillBeSent 时存下来 —— 否则拦下的到底是谁根本说不清。
+    const reqUrl = new Map();
 
     cdp.on((msg) => {
       if (msg.method === 'Runtime.consoleAPICalled') {
@@ -217,12 +238,31 @@ async function main() {
       } else if (msg.method === 'Log.entryAdded') {
         const e = msg.params.entry || {};
         if (e.level === 'error') {
-          report.log_errors.push(`${e.source}: ${e.text}${e.url ? ' @ ' + e.url : ''}`);
+          const line = `${e.source}: ${e.text}${e.url ? ' @ ' + e.url : ''}`;
+          // CSP 拦下的资源单独归一类。理由：这是**策略在按预期工作**，
+          // 不是页面缺陷。混进 log_errors 会让「CSP 生效」和「页面真坏了」
+          // 在结论上完全无法区分 —— 站点会永远被判为失败，人就不看了。
+          // 真正需要报警的是「被拦的是**同源**资源」（= 把自己的脚本挡了）。
+          if (e.source === 'security' || /content security policy/i.test(e.text)) {
+            report.csp_blocked.push(line);
+          } else {
+            report.log_errors.push(line);
+          }
         }
       } else if (msg.method === 'Network.loadingFailed') {
         const p = msg.params;
         if (p.canceled) return;                       // 主动取消不算缺陷
+        // blockedReason 是 Chrome 直接给的「为什么没发出去」：
+        // 'csp' / 'inspector' / 'mixed-content' … 有它就说明请求被策略挡了，
+        // 而不是网络或服务器出问题。这比解析错误文本可靠得多。
+        if (p.blockedReason) {
+          report.blocked_requests.push(
+            `${p.blockedReason} ${reqUrl.get(p.requestId) || '(url 未知)'} (${p.type})`);
+          return;
+        }
         report.request_failures.push(`${p.errorText} (${p.type})`);
+      } else if (msg.method === 'Network.requestWillBeSent') {
+        reqUrl.set(msg.params.requestId, msg.params.request?.url || '');
       } else if (msg.method === 'Network.responseReceived') {
         const r = msg.params.response || {};
         if (r.status >= 400) report.http_errors.push(`${r.status} ${r.url}`);
@@ -351,9 +391,35 @@ async function main() {
     report.weight.heaviest = report.weight.heaviest.slice(0, 5);
     report.weight.total_kb = Math.round(report.weight.total_bytes / 1024);
 
+    // 被策略拦下的资源默认**不算缺陷**：那是策略在按预期工作。
+    // 唯一例外是「拦下的是同源资源」—— 那说明策略把自己的脚本/样式挡了，
+    // 是真问题。按「同源 / 跨域 / 无法判定」三分流，才能让 CSP 生效与页面真坏区分开。
+    //
+    // ⚠️ 取 URL 的方式必须区分来源，这里踩过一次假阳性：
+    //   日志行的格式是 `<source>: <text> @ <页面URL>`，那个 `@ 页面URL` 后缀是
+    //   **页面自己**，不是被拦的资源。用「第一个 http(s) 链接」去取，
+    //   对「内联脚本被拦」这类**文本里本来就没有资源 URL** 的记录，
+    //   就会抓到页面 URL 从而误判成同源。
+    //   正确做法：CSP 记录只认**引号里的** URL（Chrome 报被拦资源时都带引号）；
+    //   取不到就老实说「无法判定」，而不是猜。
+    const QUOTED_URL = /'(https?:\/\/[^']+)'/;
+    const BARE_URL = /https?:\/\/[^\s'")]+/;
+    const pageOrigin = (() => { try { return new URL(opt.url).origin; } catch { return null; } })();
+    const classify = (entry, kind) => {
+      const m = kind === 'csp' ? entry.match(QUOTED_URL) : entry.match(BARE_URL);
+      const u = m && (kind === 'csp' ? m[1] : m[0]);
+      if (!u || !pageOrigin) return 'unknown';
+      return u.startsWith(pageOrigin + '/') ? 'same' : 'cross';
+    };
+    const buckets = { same: [], cross: [], unknown: [] };
+    report.csp_blocked.forEach((e) => buckets[classify(e, 'csp')].push(e));
+    report.blocked_requests.forEach((e) => buckets[classify(e, 'req')].push(e));
+    const allBlocked = report.csp_blocked.concat(report.blocked_requests);
+
     const hardErrors = report.console_errors.length + report.log_errors.length
       + report.request_failures.length + report.http_errors.length
-      + report.exceptions.length + report.dom.images_broken.length;
+      + report.exceptions.length + report.dom.images_broken.length
+      + buckets.same.length;
 
     if (opt.out) fs.writeFileSync(opt.out, JSON.stringify(report, null, 2), 'utf8');
 
@@ -372,6 +438,21 @@ async function main() {
     line('img 缺 alt', report.dom.images_missing_alt);
     line('img 裂图', report.dom.images_broken);
     line('无标签可点击元素', report.dom.unlabeled_controls);
+    // 被策略拦下的**记录**（不是「资源数」）：日志层与被拦请求层各算一条，
+    // 同一个脚本可能同时出现在两处。措辞上不合并、也不叫「资源」，免得夸大。
+    console.log((buckets.same.length ? '[!] ' : '[i] ')
+      + '被策略拦下的记录: ' + allBlocked.length
+      + (allBlocked.length === 0 ? ''
+        : '  （跨域 ' + buckets.cross.length
+          + ' · 同源 ' + buckets.same.length
+          + ' · 来源无法判定 ' + buckets.unknown.length + '）'
+          + (buckets.same.length
+            ? '  ⚠️ 同源被挡 = 策略把自己的东西拦了，是真缺陷'
+            : '  跨域被拦属策略预期行为，不计入缺陷')
+          + (buckets.unknown.length
+            ? '；「无法判定」多为内联脚本被拦（文本里没有资源 URL），需人工确认是不是自己写的'
+            : '')));
+    allBlocked.slice(0, 3).forEach((t) => console.log('      · ' + t.slice(0, 180)));
     console.log((report.dom.horizontal_overflow_px > 0 ? '[!] ' : '[OK] ')
       + '横向溢出: ' + report.dom.horizontal_overflow_px + 'px');
     if (report.dom.horizontal_overflow.length) {
