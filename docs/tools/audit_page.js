@@ -19,12 +19,16 @@
  *      - <img> 已加载但 naturalWidth === 0（图裂）
  *      - 视口宽下的横向溢出（scrollWidth > clientWidth），列出具体越界元素
  *      - 无文本的可点击元素缺 aria-label / title（无障碍）
+ *   6. 页面重量：按 MIME 分类统计真实传输字节，列出最重的 5 个资源
  *
  * 用法
  * ----
  *   node audit_page.js --url <URL> [--width 1440] [--height 1000]
  *                      [--wait-for <css>] [--wait-ms 2500] [--timeout 45000]
- *                      [--out <JSON>] [--chrome <path>]
+ *                      [--out <JSON>] [--no-scroll] [--chrome <path>]
+ *
+ * --no-scroll 不滚全页。默认会滚一遍以触发 loading="lazy"，使重量统计覆盖整页；
+ *             加上它则只量首屏 —— 用来验证懒加载到底有没有真的生效。
  *
  * 退出码：0 = 无 error 级问题；1 = 存在 error 级问题；2 = 用法/启动错误。
  * （warning 级不计入退出码，只在报告里列出。）
@@ -41,7 +45,7 @@ const path = require('path');
 function parseArgs(argv) {
   const o = {
     url: null, width: 1440, height: 1000, waitFor: null, waitMs: 2500,
-    timeout: 45000, out: null, chrome: null,
+    timeout: 45000, out: null, chrome: null, scroll: true,
   };
   const a = argv.slice(2);
   const next = () => { if (!a.length) { console.error('[X] 参数缺值'); process.exit(2); } return a.shift(); };
@@ -56,6 +60,7 @@ function parseArgs(argv) {
       case '--timeout': o.timeout = parseInt(next(), 10); break;
       case '--out': o.out = next(); break;
       case '--chrome': o.chrome = next(); break;
+      case '--no-scroll': o.scroll = false; break;
       case '-h': case '--help': o.help = true; break;
       default:
         if (k.startsWith('--')) { console.error('[X] 未知参数: ' + k); process.exit(2); }
@@ -193,7 +198,12 @@ async function main() {
       request_failures: [], http_errors: [], exceptions: [],
       dom: { images_missing_alt: [], images_broken: [], horizontal_overflow: [],
              unlabeled_controls: [], title: '', text_length: 0 },
+      weight: { total_bytes: 0, by_type: {}, heaviest: [] },
     };
+
+    // 传输字节：Network.responseReceived 给类型，loadingFinished 给 encodedDataLength。
+    // 按 requestId 关联，才能知道「哪个类型占了多重」。
+    const reqMeta = new Map();
 
     cdp.on((msg) => {
       if (msg.method === 'Runtime.consoleAPICalled') {
@@ -216,6 +226,19 @@ async function main() {
       } else if (msg.method === 'Network.responseReceived') {
         const r = msg.params.response || {};
         if (r.status >= 400) report.http_errors.push(`${r.status} ${r.url}`);
+        reqMeta.set(msg.params.requestId, {
+          url: r.url,
+          type: r.mimeType || msg.params.type || 'other',
+        });
+      } else if (msg.method === 'Network.loadingFinished') {
+        const meta = reqMeta.get(msg.params.requestId);
+        if (!meta) return;
+        const bytes = msg.params.encodedDataLength || 0;
+        report.weight.total_bytes += bytes;
+        // 只按大类聚合，避免长 MIME 串把表格撑爆
+        const group = meta.type.split(';')[0].trim() || 'other';
+        report.weight.by_type[group] = (report.weight.by_type[group] || 0) + bytes;
+        report.weight.heaviest.push({ url: meta.url, type: group, bytes });
       }
     });
 
@@ -244,19 +267,22 @@ async function main() {
     await sleep(opt.waitMs);
 
     // 滚一遍全页，触发 loading="lazy" 的图片真正发起请求
-    await cdp.send('Runtime.evaluate', {
-      expression: `(async () => {
-        const step = window.innerHeight;
-        for (let y = 0; y < document.body.scrollHeight; y += step) {
-          window.scrollTo(0, y);
-          await new Promise(r => setTimeout(r, 120));
-        }
-        window.scrollTo(0, 0);
-        await new Promise(r => setTimeout(r, 400));
-        return true;
-      })()`,
-      awaitPromise: true, returnByValue: true,
-    });
+    // （--no-scroll 时跳过：用于量首屏真实传输量，验证懒加载是否生效）
+    if (opt.scroll) {
+      await cdp.send('Runtime.evaluate', {
+        expression: `(async () => {
+          const step = window.innerHeight;
+          for (let y = 0; y < document.body.scrollHeight; y += step) {
+            window.scrollTo(0, y);
+            await new Promise(r => setTimeout(r, 120));
+          }
+          window.scrollTo(0, 0);
+          await new Promise(r => setTimeout(r, 400));
+          return true;
+        })()`,
+        awaitPromise: true, returnByValue: true,
+      });
+    }
     await sleep(600);
 
     const dom = await cdp.send('Runtime.evaluate', {
@@ -321,6 +347,10 @@ async function main() {
 
     Object.assign(report.dom, dom.result.value);
 
+    report.weight.heaviest.sort((a, b) => b.bytes - a.bytes);
+    report.weight.heaviest = report.weight.heaviest.slice(0, 5);
+    report.weight.total_kb = Math.round(report.weight.total_bytes / 1024);
+
     const hardErrors = report.console_errors.length + report.log_errors.length
       + report.request_failures.length + report.http_errors.length
       + report.exceptions.length + report.dom.images_broken.length;
@@ -346,6 +376,19 @@ async function main() {
       + '横向溢出: ' + report.dom.horizontal_overflow_px + 'px');
     if (report.dom.horizontal_overflow.length) {
       console.log('    越界元素: ' + JSON.stringify(report.dom.horizontal_overflow.slice(0, 5)));
+    }
+
+    // 页面重量（含懒加载，因为前面已滚过全页）
+    const byType = Object.entries(report.weight.by_type)
+      .sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => `${k}=${(v / 1024).toFixed(0)}KB`);
+    console.log('[i] 传输总量: ' + report.weight.total_kb + ' KB  (' + byType.join(', ') + ')');
+    if (report.weight.heaviest.length) {
+      console.log('    最重的资源:');
+      for (const h of report.weight.heaviest) {
+        console.log('      ' + (h.bytes / 1024).toFixed(0).padStart(6) + ' KB  '
+          + h.url.replace(/^https?:\/\/[^/]+/, ''));
+      }
     }
     if (opt.out) console.log('[OK] 报告已写入: ' + opt.out);
 
