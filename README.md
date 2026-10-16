@@ -190,7 +190,9 @@ project-portfolio/
 │   └── demos/                       # 视频海报帧 / 演示动图
 └── docs/
     ├── screenshots/                 # 界面截图
-    └── tools/make_og_cover.py       # 分享大图生成脚本（资料改了重跑一次）
+    └── tools/
+        ├── make_og_cover.py         # 分享大图生成脚本（资料改了重跑一次）
+        └── audit_page.js            # 页面体检脚本（控制台报错 / 404 / 裂图 / 横向溢出）
 ```
 
 ---
@@ -374,6 +376,48 @@ python manage.py test showcase -v 2
 > 于是中文站点的 `truncatechars` 会**静默截断**：标题被砍掉一半却没有任何提示，
 > 读者根本看不出被截过。本项目改用自定义过滤器 `ellipsis`
 > （`showcase/templatetags/showcase_extras.py`），显式传 `truncate='…'` 把尾巴钉死。
+
+---
+
+## 页面体检（`docs/tools/audit_page.js`）
+
+截图只能证明「看起来还行」。控制台报错、某个图标 404、某张图裂了、窄屏下横向溢出 ——
+这些在截图里要么看不见，要么容易被忽略。这个脚本用 Chrome DevTools Protocol
+把它们量化成一份可读报告：
+
+```bash
+# 桌面 / 平板 / 手机三个断点各跑一次
+node docs/tools/audit_page.js --url https://<你的域名>/ --width 1440 --wait-for ".hero-copy"
+node docs/tools/audit_page.js --url https://<你的域名>/ --width 768
+node docs/tools/audit_page.js --url https://<你的域名>/ --width 375
+```
+
+共 10 项检查，分三类：
+
+| 类别 | 检查项 |
+|---|---|
+| 运行期 | 控制台 `error` / `warning`、浏览器日志 `error`、未捕获异常 |
+| 网络 | 请求失败（`Network.loadingFailed`）、HTTP ≥ 400 的响应 |
+| DOM | `<img>` 缺 `alt`、`<img>` 裂图（`naturalWidth === 0`）、横向溢出（并定位越界元素）、无文本可点击元素缺 `aria-label` |
+
+存在 error 级问题时退出码为 `1`，干净时为 `0`，可以直接接进 CI。
+
+> **工具自己也要被验证。** 用一个**故意做坏**的页面做反向对照 ——
+> 缺 `alt` 的图 + 指向 404 的图 + 2400px 宽的 `div` + 空 `button` + 一句 `console.error` ——
+> 确认 6 类缺陷全部被抓到、退出码为 `1`，这个脚本才算可信。
+> 「零缺陷」的报告如果不先证明工具有抓取能力，等于什么都没说。
+
+**本项目线上实测**（2026-10-15，`/` 与 `/project/gesture-hci/` 各跑 1440 / 768 / 375 三档）：
+
+| 检查项 | 结果 |
+|---|---|
+| 控制台 error / warning | 0 / 0 |
+| 浏览器日志 error | 0 |
+| 请求失败 / HTTP ≥ 400 | 0 / 0 |
+| 未捕获异常 | 0 |
+| `<img>` 缺 alt / 裂图 | 0 / 0 |
+| 无标签可点击元素 | 0 |
+| 横向溢出 | 0px |
 
 ---
 
