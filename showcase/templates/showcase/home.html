@@ -1,4 +1,5 @@
 {% extends "showcase/base.html" %}
+{% load showcase_extras %}
 
 {% block title %}{% if profile %}{{ profile.name }}{% else %}项目作品集{% endif %} · 项目作品集{% endblock %}
 
@@ -152,7 +153,7 @@
             {% if project.cover_image_url %}
               <div class="card-cover">
                 <img src="{{ project.cover_image_url }}" loading="lazy"
-                     alt="{{ project.cover_caption|truncatechars:80 }}">
+                     alt="{{ project.cover_caption|ellipsis:80 }}">
                 <span class="card-cover-tag">{{ project.get_category_display }}</span>
               </div>
             {% endif %}
@@ -169,7 +170,7 @@
                 {% if project.period %}<span>{{ project.period }}</span>{% endif %}
               </p>
 
-              <p class="card-summary">{{ project.summary|truncatechars:110 }}</p>
+              <p class="card-summary">{{ project.summary|ellipsis:110 }}</p>
 
               {% if project.metrics.all %}
                 <div class="card-metrics">

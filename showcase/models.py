@@ -95,21 +95,29 @@ class Project(models.Model):
         return bool(self.shots.exists()) if self.pk else False
 
     @property
-    def cover_image_url(self):
-        """列表卡片封面图地址。
+    def cover_image_file(self):
+        """``cover_image_url`` 实际取到的那个图片字段（可能为 ``None``）。
 
-        优先级：显式指定的 ``cover_image`` → 第一张实机截图 → 演示动图 → 空串
-        （模板据此决定是否渲染封面）。
-        注意：调用方应先 ``prefetch_related('shots')``，否则每个项目多一次查询。
+        优先级：显式指定的 ``cover_image`` → 第一张实机截图 → 演示动图。
+        单独暴露出来，是为了让调用方能顺手读到图片的真实宽高
+        （社交分享卡片要写 ``og:image:width`` / ``height``，
+        写死尺寸在封面尺寸不固定时是错的）。
+        注意：调用方应先 ``prefetch_related('shots')``。
         """
         if self.cover_image:
-            return self.cover_image.url
+            return self.cover_image
         shot = self.shots.first() if self.pk else None
         if shot and shot.image:
-            return shot.image.url
+            return shot.image
         if self.demo_image:
-            return self.demo_image.url
-        return ''
+            return self.demo_image
+        return None
+
+    @property
+    def cover_image_url(self):
+        """列表卡片封面图地址；无封面时返回空串（模板据此决定是否渲染）。"""
+        f = self.cover_image_file
+        return f.url if f else ''
 
     @property
     def cover_caption(self):

@@ -31,7 +31,9 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/home-mobile.png" width="42%" alt="移动端首页">
+  <img src="docs/screenshots/home-mobile.png" width="31%" alt="移动端首页">
+  &nbsp;&nbsp;
+  <img src="docs/screenshots/home-mobile-nav.png" width="31%" alt="移动端汉堡菜单展开态">
 </p>
 
 ---
@@ -55,10 +57,20 @@
 - **数据全部后台可维护** — 项目、贡献点、指标、技术栈、链接、实机截图、首页各区块文案
   均在 Django Admin 中维护，无需改代码；项目下的五类明细用内联表格批量编辑。
 - **响应式布局** — 桌面端 / 平板 / 移动端三档断点，移动端为汉堡菜单 + 单列布局。
+- **社交分享卡片** — 每个页面都输出完整的 Open Graph / Twitter Card 元信息
+  （`og:title` / `og:description` / `og:image` / `og:url` / canonical），
+  把链接发到微信、飞书、LinkedIn、X 时会显示成带标题、摘要与配图的卡片，
+  而不是一条光秃秃的链接。首页用 1200×630 的品牌分享大图
+  （由 `docs/tools/make_og_cover.py` 生成），详情页自动改用该项目的封面图，
+  并如实写入图片真实宽高。
+- **可被搜索引擎收录** — 自带 `robots.txt`（屏蔽 `/admin/`）与
+  `sitemap.xml`（首页 + 全部项目详情页，`lastmod` 取项目更新时间）。
 - **零前端依赖** — 原生 HTML / CSS / JavaScript，无框架、无 CDN，**可完全离线运行**。
-- **27 项自动化测试** — 覆盖首页各区块、分类筛选与非法参数回退、空态提示、
+- **38 项自动化测试** — 覆盖首页各区块、分类筛选与非法参数回退、空态提示、
   6 个详情页渲染、视频嵌入、实机图集渲染与空态、卡片封面取值优先级、
-  翻页与同类推荐、404（含自定义 404 页）、后台登录保护。
+  翻页与同类推荐、404（含自定义 404 页）、后台登录保护、
+  分享卡片元信息与 `SITE_URL` 生效、`robots.txt` / `sitemap.xml`、
+  以及「模板语法不得泄漏」与「截断必须带省略号」两条防回归断言。
 
 ---
 
@@ -136,18 +148,24 @@ project-portfolio/
 │   ├── views.py                     # home() 首页聚合 + detail() 详情页 + page_not_found()
 │   ├── urls.py                      # 应用路由（app_name = showcase）
 │   ├── admin.py                     # 后台管理（项目含 5 个内联表）
-│   ├── tests.py                     # 27 项冒烟测试
+│   ├── context_processors.py        # site_url / og_image_url（分享卡片要绝对地址）
+│   ├── sitemaps.py                  # sitemap.xml 收录规则
+│   ├── tests.py                     # 38 项冒烟测试
 │   ├── migrations/
 │   ├── management/commands/
 │   │   └── seed_projects.py         # 数据导入命令（支持 --reset）
+│   ├── templatetags/
+│   │   └── showcase_extras.py       # ellipsis 过滤器（中文下 truncatechars 不加省略号）
 │   └── templates/
 │       ├── 404.html                 # 自定义 404（DEBUG=False 时生效）
+│       ├── robots.txt               # 纯文本模板
 │       └── showcase/
-│           ├── base.html            # 公共骨架（导航锚点 / 页脚联系）
+│           ├── base.html            # 公共骨架（导航锚点 / 页脚联系 / 分享卡片元信息）
 │           ├── home.html            # 首页
 │           └── detail.html          # 详情页
 ├── static/
 │   ├── favicon.svg                  # 站点图标（SVG，与页头 brand-mark 同款渐变）
+│   ├── og-cover.png                 # 分享卡片大图（1200×630，由脚本生成）
 │   ├── css/style.css                # 全部样式（含响应式断点）
 │   └── js/main.js                   # 移动端菜单 / 滚动状态 / 回到顶部
 ├── media/
@@ -155,7 +173,9 @@ project-portfolio/
 │   ├── shots/<slug>/                # 实机截图 / 结果图（每个项目一个目录）
 │   ├── covers/                      # 列表卡片封面（手工指定时使用）
 │   └── demos/                       # 视频海报帧 / 演示动图
-└── docs/screenshots/                # 界面截图
+└── docs/
+    ├── screenshots/                 # 界面截图
+    └── tools/make_og_cover.py       # 分享大图生成脚本（资料改了重跑一次）
 ```
 
 ---
@@ -167,6 +187,8 @@ project-portfolio/
 | `/` | `showcase:home` | 首页，列出全部项目与各介绍区块 |
 | `/?category=<key>` | `showcase:home` | 按分类筛选 |
 | `/project/<slug>/` | `showcase:detail` | 项目详情页（演示视频 + 实机截图 + 翻页 + 同类推荐） |
+| `/robots.txt` | `TemplateView` | 纯文本，屏蔽 `/admin/` 并声明 sitemap 地址 |
+| `/sitemap.xml` | `django.contrib.sitemaps.views.sitemap` | 站点地图：首页 + 全部项目详情页 |
 | 任意未匹配地址 | `showcase:page_not_found` | 自定义 404 页（仅在 `DJANGO_DEBUG=0` 时生效） |
 | `/admin/` | Django Admin | 后台管理 |
 
@@ -254,6 +276,47 @@ Project ──┬── Contribution (贡献点)
 
 ---
 
+## 社交分享卡片
+
+<p align="center">
+  <img src="static/og-cover.png" width="80%" alt="首页分享卡片大图：1200×630，含姓名、求职定位与核心统计数字">
+</p>
+
+把链接发到微信 / 飞书 / LinkedIn / X 时，这些平台会去抓页面里的
+Open Graph 标签来生成预览卡片。标签由 `showcase/context_processors.py`
+提供绝对地址，`base.html` 统一输出：
+
+| 标签 | 首页取值 | 详情页取值 |
+|---|---|---|
+| `og:type` | `website` | `article` |
+| `og:title` | 姓名 · 项目作品集 | 项目名 · 姓名 |
+| `og:description` | `Profile.tagline` | 项目简介 |
+| `og:image` | `static/og-cover.png`（1200×630） | 该项目封面图的**真实尺寸** |
+| `og:url` / `canonical` | `SITE_URL` + 路径 | 同左 |
+
+两个容易踩的点，这里都处理了：
+
+1. **必须是绝对地址。** `og:url` / `og:image` 放相对路径时平台抓不到图，
+   卡片会退化成一条纯文字链接。部署在反向代理后面时，
+   `request.build_absolute_uri()` 可能拿到内网地址或 `http`，
+   所以**上线后务必显式配置 `DJANGO_SITE_URL`**（见「部署」一节）。
+2. **尺寸要如实写。** `og:image:width` / `height` 是给平台的宽高比提示。
+   详情页的 `og:image` 换成了项目封面，尺寸并不固定，
+   因此这两个值取自 `ImageField.width/height` 的真实读数；
+   读不到就干脆不输出，而不是沿用首页的 1200×630 蒙混过去。
+
+首页分享大图由脚本生成（姓名、定位、统计数字都写死在图里）：
+
+```bash
+python docs/tools/make_og_cover.py     # 产出 static/og-cover.png
+```
+
+`seed_projects` 里的资料改了之后重跑一次即可。
+测试 `test_og_cover_asset_is_1200x630` 会把「模板里写死的 1200×630」
+和「真实素材尺寸」绑在一起，素材换了尺寸而模板没跟上时会先失败。
+
+---
+
 ## 后台管理
 
 登录 `/admin/` 后可：
@@ -278,7 +341,24 @@ python manage.py test showcase -v 2
 覆盖范围：seed 数据完整性、模型属性（分段 / 关键词拆分）、首页各锚点渲染、
 分类筛选与非法分类回退、空态提示、卡片封面取值优先级与「6 张卡片均有封面」、
 6 个详情页渲染、视频嵌入、实机图集渲染与「无截图时不渲染」、截图排序、
-翻页与同类推荐、404 与自定义 404 页（`override_settings(DEBUG=False)`）、后台登录保护。
+翻页与同类推荐、404 与自定义 404 页（`override_settings(DEBUG=False)`）、后台登录保护、
+分享卡片元信息（绝对地址 / 默认图 / `SITE_URL` 生效 / 详情页真实封面尺寸）、
+`robots.txt` 与 `sitemap.xml`。
+
+另有三条**防回归**断言，各自对应一个踩过的坑：
+
+| 断言 | 防的是什么 |
+|---|---|
+| 渲染结果里不得出现 `{%`、`{{`、`{#` | Django 的 `{# #}` 注释**只支持单行**，写成多行会把注释原文输出到页面上 |
+| 页面上的截断标题必须带 `…` | 中文（zh-hans / zh-hant）下 Django 内置 `truncatechars` 的省略号译成了**空串**，会静默截断 |
+| `static/og-cover.png` 必须是 1200×630 | `base.html` 里写死了这个尺寸，素材换了而模板没改就会对不上 |
+
+> **关于 `truncatechars`（值得单独记一笔）**：Django 3.2 的截断尾巴来自
+> `pgettext('String to return when truncating text', '%(truncated_text)s…')`，
+> 受当前语言影响 —— 英文下是 `'x…'`，zh-hans / zh-hant 下是 `'x'`。
+> 于是中文站点的 `truncatechars` 会**静默截断**：标题被砍掉一半却没有任何提示，
+> 读者根本看不出被截过。本项目改用自定义过滤器 `ellipsis`
+> （`showcase/templatetags/showcase_extras.py`），显式传 `truncate='…'` 把尾巴钉死。
 
 ---
 
@@ -304,6 +384,7 @@ python manage.py test showcase -v 2
    | `DJANGO_SECRET_KEY` | 密钥，**务必更换**（保持 `django-insecure-` 前缀会被 `check --deploy` 判为 W009） |
    | `DJANGO_DEBUG` | 设为 `0` 关闭调试 |
    | `DJANGO_ALLOWED_HOSTS` | 逗号分隔的域名列表 |
+   | `DJANGO_SITE_URL` | **正式域名**，如 `https://portfolio.example.com`。分享卡片的 `og:url` / `og:image`、`canonical`、`robots.txt` 里的 Sitemap 地址都由它拼出；留空则回退到请求地址（本地开发够用，**上线后必须配**，否则代理后面会拼出内网地址或 http） |
    | `DJANGO_SECURE_SSL_REDIRECT` | 已由反向代理终止 TLS 时设为 `0` |
    | `DJANGO_HSTS_PRELOAD` | 默认开启；不想被浏览器 HSTS 预加载列表收录时设为 `0` |
 
@@ -333,9 +414,10 @@ python manage.py test showcase -v 2
 
 - 本项目为**个人作品集展示**用途。仓库内的 `SECRET_KEY` 为开发占位值，
   生产部署请务必通过环境变量替换。
-- 演示视频约 7.0 MB、实机截图约 2.5 MB、卡片封面与视频海报帧约 0.7 MB，
+- 演示视频约 7.0 MB、实机截图约 2.5 MB、卡片封面约 0.24 MB、视频海报帧与演示动图约 0.48 MB，
   均直接纳入版本库，以便克隆后即可查看；
   如需瘦身可改用 Git LFS 或改为外部视频链接（`video_external_url`）。
+  静态资源（CSS / JS / 图标 / 分享大图）合计约 115 KB。
 - **隐私**：仓库内所有演示素材均已脱敏——人物区域强模糊、类别名替换为
   通用标签、真实姓名替换为编号；不含手机号等个人联系方式。
 - 若本机设置了系统代理，访问 `127.0.0.1` 可能被代理拦截返回 502，

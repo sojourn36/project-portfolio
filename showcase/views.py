@@ -6,6 +6,23 @@ from .models import (
     Award, Education, Pillar, Profile, ProfileFact, Project, SkillGroup, Stat,
 )
 
+FALLBACK_TITLE = '项目作品集'
+
+
+def _share_title(profile, suffix=None):
+    """分享卡片标题：「姓名 · 后缀」，缺姓名时退到「项目作品集」。"""
+    name = getattr(profile, 'name', '') or ''
+    if not name:
+        return suffix or FALLBACK_TITLE
+    return '{} · {}'.format(name, suffix) if suffix else name
+
+
+def _share_description(profile):
+    """分享卡片描述：优先 tagline，其次 headline，最后空串（模板会留空）。"""
+    if not profile:
+        return ''
+    return profile.tagline or profile.headline or ''
+
 
 def home(request):
     """首页：整体介绍 + 教育 + 项目列表 + 荣誉 + 技能，支持按分类筛选。"""
@@ -19,8 +36,9 @@ def home(request):
     if active_category:
         projects = projects.filter(category=active_category)
 
+    profile = Profile.objects.first()
     context = {
-        'profile': Profile.objects.first(),
+        'profile': profile,
         'stats': Stat.objects.all(),
         'facts': ProfileFact.objects.all(),
         'pillars': Pillar.objects.all(),
@@ -31,6 +49,9 @@ def home(request):
         'active_category': active_category,
         'awards': Award.objects.all(),
         'skill_groups': SkillGroup.objects.all(),
+        # ---- 社交分享卡片（base.html 里优先用这两个，缺了才回退 profile）----
+        'og_title': _share_title(profile, FALLBACK_TITLE),
+        'og_description': _share_description(profile),
     }
     return render(request, 'showcase/home.html', context)
 
@@ -55,13 +76,37 @@ def detail(request, slug):
                .filter(category=project.category)
                .exclude(pk=project.pk)[:3])
 
+    profile = Profile.objects.first()
+
+    # 分享图用项目封面；相对路径要转成绝对地址，否则平台抓不到图。
+    # cover_image_file 依赖 prefetch 过的 shots，这里已 prefetch，不会多查。
+    share_image = share_image_w = share_image_h = share_alt = ''
+    cover = project.cover_image_file
+    if cover:
+        share_image = request.build_absolute_uri(cover.url)
+        share_alt = '{} 封面图'.format(project.title)
+        try:
+            # ImageFieldFile.width/height 会打开文件读一次头部（有缓存）。
+            # 文件缺失时抛异常 —— 那就别写尺寸，交给平台自己取。
+            share_image_w, share_image_h = cover.width, cover.height
+        except (OSError, ValueError):
+            share_image_w = share_image_h = ''
+
     context = {
-        'profile': Profile.objects.first(),
+        'profile': profile,
         'project': project,
         'prev_project': prev_project,
         'next_project': next_project,
         'related_projects': related,
         'categories': Project.CATEGORY_CHOICES,
+        # ---- 社交分享卡片 ----
+        'og_type': 'article',
+        'og_title': '{} · {}'.format(project.title, _share_title(profile)),
+        'og_description': project.summary or _share_description(profile),
+        'og_image': share_image,
+        'og_image_width': share_image_w,
+        'og_image_height': share_image_h,
+        'og_image_alt': share_alt,
     }
     return render(request, 'showcase/detail.html', context)
 
@@ -72,5 +117,8 @@ def page_not_found(request, exception):
     只在 ``DEBUG=False`` 时生效（DEBUG 打开时 Django 显示调试页）。
     这里显式传 ``profile``，否则 base.html 的页头会退化成占位文案。
     """
-    return render(request, '404.html',
-                  {'profile': Profile.objects.first()}, status=404)
+    profile = Profile.objects.first()
+    return render(request, '404.html', {
+        'profile': profile,
+        'og_title': '页面不存在 · {}'.format(_share_title(profile)),
+    }, status=404)

@@ -1,6 +1,8 @@
 {% extends "showcase/base.html" %}
+{% load showcase_extras %}
 
 {% block title %}{{ project.title }} · {% if profile %}{{ profile.name }}{% else %}项目作品集{% endif %}{% endblock %}
+{# meta 描述不显示给读者，静默截断即可，不需要省略号 #}
 {% block description %}{{ project.summary|truncatechars:120 }}{% endblock %}
 
 {% block content %}
@@ -12,7 +14,8 @@
     <span class="sep">/</span>
     <a href="{% url 'showcase:home' %}?category={{ project.category }}#projects">{{ project.get_category_display }}</a>
     <span class="sep">/</span>
-    <span class="current">{{ project.title|truncatechars:28 }}</span>
+    {# 用 ellipsis 而不是 truncatechars：中文下后者不加省略号（见过滤器注释） #}
+    <span class="current">{{ project.title|ellipsis:28 }}</span>
   </div>
 </nav>
 
@@ -180,7 +183,7 @@
             <li>
               <a href="{{ item.get_absolute_url }}">
                 <span class="rel-badge">{{ item.badge|default:"PRJ" }}</span>
-                <span class="rel-title">{{ item.title|truncatechars:34 }}</span>
+                <span class="rel-title">{{ item.title|ellipsis:34 }}</span>
               </a>
             </li>
           {% endfor %}
@@ -202,14 +205,14 @@
       {% if prev_project %}
         <a class="pager-link pager-prev" href="{{ prev_project.get_absolute_url }}">
           <span class="pager-dir">← 上一个</span>
-          <span class="pager-name">{{ prev_project.title|truncatechars:30 }}</span>
+          <span class="pager-name">{{ prev_project.title|ellipsis:30 }}</span>
         </a>
       {% else %}<span class="pager-link is-empty"></span>{% endif %}
 
       {% if next_project %}
         <a class="pager-link pager-next" href="{{ next_project.get_absolute_url }}">
           <span class="pager-dir">下一个 →</span>
-          <span class="pager-name">{{ next_project.title|truncatechars:30 }}</span>
+          <span class="pager-name">{{ next_project.title|ellipsis:30 }}</span>
         </a>
       {% else %}<span class="pager-link is-empty"></span>{% endif %}
     </div>

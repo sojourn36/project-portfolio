@@ -39,6 +39,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'django.contrib.sitemaps',
     # 本项目
     'showcase',
 ]
@@ -66,6 +67,8 @@ TEMPLATES = [
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
+                # 分享卡片需要的绝对地址（og:url / og:image）
+                'showcase.context_processors.site_meta',
             ],
         },
     },
@@ -118,6 +121,14 @@ DEFAULT_AUTO_FIELD = 'django.db.models.AutoField'
 # 大文件上传（演示视频）
 DATA_UPLOAD_MAX_MEMORY_SIZE = 200 * 1024 * 1024   # 200 MB
 FILE_UPLOAD_MAX_MEMORY_SIZE = 200 * 1024 * 1024
+
+# --------------------------------------------------------------------------
+# 站点绝对地址（社交分享卡片 og:url / og:image / sitemap.xml 用）
+# --------------------------------------------------------------------------
+# 例：DJANGO_SITE_URL=https://portfolio.example.com
+# 留空则回退到「当前请求的绝对地址」——本地开发够用，但**上线后请显式配置**：
+# 反向代理后面 request.build_absolute_uri() 可能拿到内网 IP 或 http。
+SITE_URL = os.environ.get('DJANGO_SITE_URL', '').rstrip('/')
 
 # --------------------------------------------------------------------------
 # 生产环境安全项（DJANGO_DEBUG=0 时自动生效）
