@@ -1,13 +1,11 @@
-"""config 路由：后台 + 项目展示 + sitemap/robots + 开发期媒体文件服务。"""
+"""config 路由：后台 + 项目展示 + sitemap/robots + 媒体文件服务。"""
 
-from django.conf import settings
-from django.conf.urls.static import static
 from django.contrib import admin
 from django.contrib.sitemaps.views import sitemap
 from django.urls import include, path, re_path
 from django.views.generic import TemplateView
-from django.views.static import serve
 
+from showcase.media import serve_media
 from showcase.sitemaps import ProjectSitemap, StaticViewSitemap
 
 sitemaps = {
@@ -31,17 +29,19 @@ urlpatterns = [
          name='robots'),
 ]
 
-# 媒体文件（演示视频 / 实机截图）由谁托管：
-# - DEBUG：django.conf.urls.static.static() 只在 DEBUG 下返回路由，够用
-# - 部署到单端口环境、前面没有 Nginx 时：用 DJANGO_SERVE_MEDIA=1 显式打开
-#   （static() 在 DEBUG=False 时返回空列表，所以这里要另走 serve 视图）
-if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
-elif getattr(settings, 'SERVE_MEDIA', False):
-    urlpatterns += [
-        re_path(r'^media/(?P<path>.*)$', serve,
-                {'document_root': settings.MEDIA_ROOT}),
-    ]
+# 媒体文件（演示视频 / 实机截图）统一交给 showcase.media.serve_media。
+#
+# 两点说明：
+#  1. 路由**总是**注册，是否真的对外提供由视图内的 settings.DEBUG /
+#     settings.SERVE_MEDIA 决定。不在 urls.py 里判断，是因为路由表在模块
+#     导入时就建好了 —— 之后改 settings 不生效，且这条路由会变成测不到的代码。
+#  2. 开发与生产共用同一个视图。Django 自带的 django.views.static.serve
+#     （以及 DEBUG 下的 static()）底层是 FileResponse，而 FileResponse
+#     不支持 Range 请求 —— 结果是视频进度条拖不动。若开发用它、生产用别的，
+#     就会出现「本地好好的、上线才发现拖不动」这种只在部署后暴露的差异。
+urlpatterns += [
+    re_path(r'^media/(?P<path>.*)$', serve_media, name='serve-media'),
+]
 
 admin.site.site_header = '作品集管理后台'
 admin.site.site_title = '作品集管理'

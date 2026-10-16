@@ -8,12 +8,14 @@
 """
 
 import io
+import os
 import shutil
 import tempfile
 import unittest
 
 import django
 from PIL import Image as PILImage
+from django.conf import settings
 from django.contrib.staticfiles import finders
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
@@ -400,3 +402,276 @@ class SeedDataTestCase(TestCase):
         response = self.client.get('/admin/')
         self.assertEqual(response.status_code, 302)
         self.assertIn('/admin/login/', response['Location'])
+
+
+@override_settings(SERVE_MEDIA=True)
+class MediaRangeTestCase(TestCase):
+    """媒体文件的 Range 支持 —— 视频进度条能不能拖，全看这个。
+
+    背景：Django 3.2 的 FileResponse **完全不支持 Range**，
+    django.views.static.serve 只是它的薄包装。实测线上
+    ``GET /media/videos/x.mp4  Range: bytes=0-99`` 返回 ``200`` + 全量 2333314B，
+    而同样条件下静态文件（WhiteNoise 托管）返回 ``206`` + ``Content-Range``。
+    本组测试锁死 showcase.media.serve_media 的行为。
+    """
+
+    PAYLOAD = bytes(range(256)) * 4          # 1024 字节，逐字节可校验
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.media_root = tempfile.mkdtemp()
+        cls.override = override_settings(MEDIA_ROOT=cls.media_root)
+        cls.override.enable()
+        os.makedirs(os.path.join(cls.media_root, 'videos'))
+        cls.video_rel = 'videos/demo.mp4'
+        with open(os.path.join(cls.media_root, cls.video_rel), 'wb') as fh:
+            fh.write(cls.PAYLOAD)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.override.disable()
+        shutil.rmtree(cls.media_root, ignore_errors=True)
+        super().tearDownClass()
+
+    def _get(self, rel=None, **extra):
+        return self.client.get('/media/' + (rel or self.video_rel), **extra)
+
+    @staticmethod
+    def _body(response):
+        """取出流式响应体，并缓存 —— 流式响应只能消费一次。
+
+        不缓存的话，同一个 response 断言两次时第二次会读到空
+        （生成器已耗尽），表现为莫名其妙的 ``b'' != b'...'``。
+        踩过一次，所以把幂等性做进辅助函数里，而不是靠调用方自觉。
+        """
+        if not hasattr(response, '_cached_body'):
+            response._cached_body = b''.join(response.streaming_content)
+        return response._cached_body
+
+    # ---------- 完整请求 ----------
+    def test_full_get_returns_200_and_advertises_accept_ranges(self):
+        response = self._get()
+        self.assertEqual(response.status_code, 200)
+        # 这一行是整件事的关键：没有 Accept-Ranges，浏览器不会尝试区间请求
+        self.assertEqual(response['Accept-Ranges'], 'bytes')
+        self.assertEqual(response['Content-Length'], str(len(self.PAYLOAD)))
+        self.assertNotIn('Content-Range', response)
+        self.assertEqual(self._body(response), self.PAYLOAD)
+
+    def test_content_type_is_pinned_for_mp4(self):
+        """不能退化成 application/octet-stream —— 那样浏览器会下载而不是内联播放。
+
+        只靠 mimetypes 不保险：它依赖操作系统的 MIME 数据库，
+        精简过的 Linux 容器常认不出 .mp4。
+        """
+        self.assertEqual(self._get()['Content-Type'], 'video/mp4')
+
+    def test_head_request_does_not_need_range_support(self):
+        response = self.client.head('/media/' + self.video_rel)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Length'], str(len(self.PAYLOAD)))
+
+    # ---------- 区间请求 ----------
+    def test_range_first_bytes_returns_206(self):
+        response = self._get(HTTP_RANGE='bytes=0-99')
+        self.assertEqual(response.status_code, 206)
+        self.assertEqual(response['Content-Range'], 'bytes 0-99/1024')
+        self.assertEqual(response['Content-Length'], '100')
+        self.assertEqual(response['Accept-Ranges'], 'bytes')
+        self.assertEqual(self._body(response), self.PAYLOAD[:100])
+
+    def test_range_middle_returns_exact_slice(self):
+        response = self._get(HTTP_RANGE='bytes=500-599')
+        self.assertEqual(response.status_code, 206)
+        self.assertEqual(response['Content-Range'], 'bytes 500-599/1024')
+        self.assertEqual(self._body(response), self.PAYLOAD[500:600])
+
+    def test_open_ended_range_runs_to_end_of_file(self):
+        response = self._get(HTTP_RANGE='bytes=1000-')
+        self.assertEqual(response.status_code, 206)
+        self.assertEqual(response['Content-Range'], 'bytes 1000-1023/1024')
+        self.assertEqual(self._body(response), self.PAYLOAD[1000:])
+
+    def test_suffix_range_returns_last_n_bytes(self):
+        """``bytes=-N`` 取末尾 N 字节 —— 播放器读 moov atom 时常这么请求。"""
+        response = self._get(HTTP_RANGE='bytes=-100')
+        self.assertEqual(response.status_code, 206)
+        self.assertEqual(response['Content-Range'], 'bytes 924-1023/1024')
+        self.assertEqual(self._body(response), self.PAYLOAD[-100:])
+
+    def test_suffix_range_larger_than_file_clamps_to_whole_file(self):
+        response = self._get(HTTP_RANGE='bytes=-99999')
+        self.assertEqual(response.status_code, 206)
+        self.assertEqual(response['Content-Range'], 'bytes 0-1023/1024')
+        self.assertEqual(self._body(response), self.PAYLOAD)
+
+    def test_range_end_beyond_size_is_clamped(self):
+        response = self._get(HTTP_RANGE='bytes=0-99999')
+        self.assertEqual(response.status_code, 206)
+        self.assertEqual(response['Content-Range'], 'bytes 0-1023/1024')
+
+    def test_single_byte_range(self):
+        response = self._get(HTTP_RANGE='bytes=7-7')
+        self.assertEqual(response.status_code, 206)
+        self.assertEqual(self._body(response), self.PAYLOAD[7:8])
+
+    # ---------- 越界与降级 ----------
+    def test_unsatisfiable_range_returns_416(self):
+        response = self._get(HTTP_RANGE='bytes=1024-')
+        self.assertEqual(response.status_code, 416)
+        self.assertEqual(response['Content-Range'], 'bytes */1024')
+        self.assertEqual(self._body(response), b'')
+
+    def test_reversed_range_returns_416(self):
+        response = self._get(HTTP_RANGE='bytes=500-100')
+        self.assertEqual(response.status_code, 416)
+
+    def test_zero_suffix_range_returns_416(self):
+        response = self._get(HTTP_RANGE='bytes=-0')
+        self.assertEqual(response.status_code, 416)
+
+    def test_multi_range_degrades_to_full_body(self):
+        """多段 Range 按 200 全量返回 —— 规范允许的降级，不做 multipart/byteranges。"""
+        response = self._get(HTTP_RANGE='bytes=0-9,20-29')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self._body(response), self.PAYLOAD)
+
+    def test_malformed_range_degrades_to_full_body(self):
+        for header in ('bytes=abc', 'items=0-10', 'bytes=', 'bytes=-'):
+            with self.subTest(header=header):
+                response = self._get(HTTP_RANGE=header)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(self._body(response), self.PAYLOAD)
+
+    # ---------- 条件请求 ----------
+    def test_not_modified_when_if_modified_since_is_fresh(self):
+        first = self._get()
+        response = self._get(HTTP_IF_MODIFIED_SINCE=first['Last-Modified'])
+        self.assertEqual(response.status_code, 304)
+        self.assertEqual(response['Accept-Ranges'], 'bytes')
+
+    # ---------- 安全与开关 ----------
+    def test_missing_file_returns_404(self):
+        self.assertEqual(self._get('videos/nope.mp4').status_code, 404)
+
+    def test_path_traversal_is_blocked(self):
+        """``..`` 穿越与「软链指向根目录外」都要挡住，所以用 realpath 而非 normpath。"""
+        from django.http import Http404
+
+        from .media import _resolve
+        for bad in ('../manage.py', 'videos/../../manage.py', '..\\manage.py'):
+            with self.subTest(path=bad):
+                with self.assertRaises(Http404):
+                    _resolve(bad)
+
+    def test_symlink_escape_is_blocked(self):
+        """目录内的软链指向根目录之外时也必须拒绝。"""
+        from django.http import Http404
+
+        from .media import _resolve
+        outside = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, outside, True)
+        secret = os.path.join(outside, 'secret.txt')
+        with open(secret, 'w', encoding='utf-8') as fh:
+            fh.write('不该被读到')
+        link = os.path.join(self.media_root, 'escape.txt')
+        try:
+            os.symlink(secret, link)
+        except (OSError, NotImplementedError):
+            self.skipTest('当前环境不支持创建软链')
+        with self.assertRaises(Http404):
+            _resolve('escape.txt')
+
+    @override_settings(SERVE_MEDIA=False, DEBUG=False)
+    def test_media_route_is_gated_by_settings(self):
+        """路由总是注册，但没开开关时必须 404，而不是把文件发出去。"""
+        self.assertEqual(self._get().status_code, 404)
+
+    # ---------- 解析器单测 ----------
+    def test_parse_range_header_edges(self):
+        from .media import parse_range_header
+        cases = [
+            (None, 1024, None),
+            ('', 1024, None),
+            ('bytes=0-99', 1024, (0, 99)),
+            ('bytes=0-', 1024, (0, 1023)),
+            ('bytes=-100', 1024, (924, 1023)),
+            ('bytes=1023-1023', 1024, (1023, 1023)),
+            ('bytes=1023-', 1024, (1023, 1023)),
+            ('bytes=1024-', 1024, 'invalid'),
+            ('bytes=2000-3000', 1024, 'invalid'),
+            ('bytes=500-100', 1024, 'invalid'),
+            ('bytes=-0', 1024, 'invalid'),
+            ('bytes=0-10,20-30', 1024, None),
+            ('bytes=abc', 1024, None),
+            ('bytes=-', 1024, None),
+            ('BYTES=0-9', 1024, None),          # 单位大小写敏感，按规范降级
+        ]
+        for header, size, expected in cases:
+            with self.subTest(header=header):
+                self.assertEqual(parse_range_header(header, size), expected)
+
+    def test_empty_file_range_is_invalid(self):
+        from .media import parse_range_header
+        self.assertEqual(parse_range_header('bytes=0-', 0), 'invalid')
+
+    def test_multi_chunk_streaming_is_not_truncated(self):
+        """夹具必须**大于一个 CHUNK_SIZE**，否则「只发一块」的 bug 根本测不出来。
+
+        踩过：本类其余用例的夹具是 1024 字节，小于 CHUNK_SIZE（64 KiB），
+        所以哪怕生成器只 yield 第一块、后面的都漏掉，所有断言照样通过。
+        而真实视频 2.3 MB 要跨 36 个块 —— 用大夹具才覆盖得到这条路径。
+        """
+        from .media import CHUNK_SIZE
+
+        size = CHUNK_SIZE * 2 + 1234
+        big = bytes((i * 7 + 3) % 256 for i in range(size))
+        rel = 'videos/big.mp4'
+        with open(os.path.join(self.media_root, rel), 'wb') as fh:
+            fh.write(big)
+
+        full = self.client.get('/media/' + rel)
+        body = self._body(full)
+        self.assertEqual(len(body), size)
+        self.assertEqual(body, big)
+        self.assertEqual(full['Content-Length'], str(size))
+
+        # 跨块区间：起点落在第一块内，终点落在第三块内
+        start, end = CHUNK_SIZE - 10, CHUNK_SIZE * 2 + 10
+        part = self.client.get('/media/' + rel,
+                               HTTP_RANGE='bytes=%d-%d' % (start, end))
+        self.assertEqual(part.status_code, 206)
+        # 流式响应**只能消费一次** —— 这里必须先存下来再断言两次，
+        # 否则第二次读到的是空（生成器已耗尽）。
+        part_body = self._body(part)
+        self.assertEqual(len(part_body), end - start + 1)
+        self.assertEqual(part_body, big[start:end + 1])
+
+    def test_chunk_size_is_used_as_the_streaming_unit(self):
+        """钉住块大小本身：它决定「大文件是否被切块发送」，不该被悄悄改掉。"""
+        from .media import CHUNK_SIZE
+        self.assertEqual(CHUNK_SIZE, 64 * 1024)
+
+    # ---------- 端到端：真实种子视频 ----------
+    @override_settings(MEDIA_ROOT=settings.MEDIA_ROOT, SERVE_MEDIA=True)
+    def test_seeded_video_supports_range(self):
+        """用仓库里真实的演示视频跑一遍，确认发出去的确实是 206。
+
+        这个类不继承 SeedDataTestCase，库里默认是空的 ——
+        必须自己导入种子数据，否则这条测试会静默变成 skip 而不是真的验证。
+        """
+        call_command('seed_projects', verbosity=0)
+        project = Project.objects.exclude(video_file='').first()
+        self.assertIsNotNone(project, '种子数据里应当有带视频的项目')
+        url = project.video_file.url
+        full = self.client.get(url)
+        self.assertEqual(full.status_code, 200)
+        self.assertEqual(full['Accept-Ranges'], 'bytes')
+
+        size = int(full['Content-Length'])
+        self.assertGreater(size, 0)
+        part = self.client.get(url, HTTP_RANGE='bytes=0-1023')
+        self.assertEqual(part.status_code, 206)
+        self.assertEqual(part['Content-Range'], 'bytes 0-1023/%d' % size)
+        self.assertEqual(len(self._body(part)), 1024)

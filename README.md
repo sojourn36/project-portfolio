@@ -12,7 +12,7 @@
 
 ### ▶ [**点这里直接看在线站点**](https://7ab156b731314b5599d7ff21a3c6f183.sg.agentos-app.run)
 
-<sub>分类筛选、项目翻页、演示视频都能真点 —— 不是静态快照，是真的 Django 在跑</sub>
+<sub>分类筛选、详情页的前后项目翻页、演示视频都能真点 —— 不是静态快照，是真的 Django 在跑</sub>
 
 ---
 
@@ -165,7 +165,8 @@ project-portfolio/
 │   ├── admin.py                     # 后台管理（项目含 5 个内联表）
 │   ├── context_processors.py        # site_url / og_image_url（分享卡片要绝对地址）
 │   ├── sitemaps.py                  # sitemap.xml 收录规则
-│   ├── tests.py                     # 38 项冒烟测试
+│   ├── media.py                     # 媒体文件视图（支持 Range，视频进度条能拖）
+│   ├── tests.py                     # 63 项冒烟测试
 │   ├── migrations/
 │   ├── management/commands/
 │   │   └── seed_projects.py         # 数据导入命令（支持 --reset）
@@ -192,7 +193,8 @@ project-portfolio/
     ├── screenshots/                 # 界面截图
     └── tools/
         ├── make_og_cover.py         # 分享大图生成脚本（资料改了重跑一次）
-        └── audit_page.js            # 页面体检脚本（控制台报错 / 404 / 裂图 / 横向溢出）
+        ├── audit_page.js            # 单页体检（控制台报错 / 404 / 裂图 / 横向溢出）
+        └── linkcheck.js             # 全站爬取（逐页状态码 + 标题）
 ```
 
 ---
@@ -360,7 +362,7 @@ python manage.py test showcase -v 2
 6 个详情页渲染、视频嵌入、实机图集渲染与「无截图时不渲染」、截图排序、
 翻页与同类推荐、404 与自定义 404 页（`override_settings(DEBUG=False)`）、后台登录保护、
 分享卡片元信息（绝对地址 / 默认图 / `SITE_URL` 生效 / 详情页真实封面尺寸）、
-`robots.txt` 与 `sitemap.xml`。
+`robots.txt` 与 `sitemap.xml`、**媒体文件的 Range 行为**（23 项，见下）。
 
 另有三条**防回归**断言，各自对应一个踩过的坑：
 
@@ -369,6 +371,18 @@ python manage.py test showcase -v 2
 | 渲染结果里不得出现 `{%`、`{{`、`{#` | Django 的 `{# #}` 注释**只支持单行**，写成多行会把注释原文输出到页面上 |
 | 页面上的截断标题必须带 `…` | 中文（zh-hans / zh-hant）下 Django 内置 `truncatechars` 的省略号译成了**空串**，会静默截断 |
 | `static/og-cover.png` 必须是 1200×630 | `base.html` 里写死了这个尺寸，素材换了而模板没改就会对不上 |
+
+媒体 Range 的 23 项测试覆盖：完整请求的 `Accept-Ranges`、首段 / 中间段 / 单字节段 /
+开放式段 / 后缀段、区间越界与倒置区间回 `416`、多段与畸形头降级为 `200`、
+`If-Modified-Since` 回 `304`、`Content-Type` 不退化成 `application/octet-stream`、
+`..` 穿越与软链越权被拒、开关关闭时 `404`、解析器边界用例，
+以及一条用仓库里真实演示视频跑的端到端断言。
+
+> **关于「夹具太小导致测试形同虚设」**：本组测试最初的夹具是 1024 字节，
+> 而流式发送的块大小是 64 KiB —— 也就是说，哪怕生成器只 yield 第一块、
+> 后面的全部漏掉，所有断言照样通过。补了一条用 130 KB 夹具（跨 3 个块）
+> 的用例才真正覆盖到分块路径。
+> **夹具尺寸必须跨过被测代码的阈值，否则测的是「没报错」，不是「对」。**
 
 > **关于 `truncatechars`（值得单独记一笔）**：Django 3.2 的截断尾巴来自
 > `pgettext('String to return when truncating text', '%(truncated_text)s…')`，
@@ -379,11 +393,14 @@ python manage.py test showcase -v 2
 
 ---
 
-## 页面体检（`docs/tools/audit_page.js`）
+## 页面体检与全站核验（`docs/tools/`）
 
-截图只能证明「看起来还行」。控制台报错、某个图标 404、某张图裂了、窄屏下横向溢出 ——
-这些在截图里要么看不见，要么容易被忽略。这个脚本用 Chrome DevTools Protocol
-把它们量化成一份可读报告：
+截图只能证明「看起来还行」。控制台报错、某个图标 404、某张图裂了、窄屏下横向溢出、
+某个页面根本 404 —— 这些在截图里要么看不见，要么容易被忽略。
+`docs/tools/` 下两个零依赖 Node 脚本（Node ≥ 21，用内置 `WebSocket` / `fetch`，
+不需要 `npm install`）把它们量化成可读报告。
+
+### `audit_page.js` —— 单页体检
 
 ```bash
 # 桌面 / 平板 / 手机三个断点各跑一次
@@ -401,13 +418,37 @@ node docs/tools/audit_page.js --url https://<你的域名>/ --width 375
 | DOM | `<img>` 缺 `alt`、`<img>` 裂图（`naturalWidth === 0`）、横向溢出（并定位越界元素）、无文本可点击元素缺 `aria-label` |
 
 存在 error 级问题时退出码为 `1`，干净时为 `0`，可以直接接进 CI。
+视口宽度用 `Emulation.setDeviceMetricsOverride` 设置，**绕开了 Windows
+最小窗口宽度约 500px 的限制** —— 所以 375px 这种窄断点在它这里是可靠的。
 
-> **工具自己也要被验证。** 用一个**故意做坏**的页面做反向对照 ——
-> 缺 `alt` 的图 + 指向 404 的图 + 2400px 宽的 `div` + 空 `button` + 一句 `console.error` ——
-> 确认 6 类缺陷全部被抓到、退出码为 `1`，这个脚本才算可信。
-> 「零缺陷」的报告如果不先证明工具有抓取能力，等于什么都没说。
+### `linkcheck.js` —— 全站爬取
 
-**本项目线上实测**（2026-10-15，`/` 与 `/project/gesture-hci/` 各跑 1440 / 768 / 375 三档）：
+单页体检只能证明「我打开过的那一页没问题」。README 里写了「分类筛选、
+前后项目翻页都能真点」这类话，那就得把每个可达页面都真的走一遍：
+
+```bash
+node docs/tools/linkcheck.js --root https://<你的域名>/ --max 80
+```
+
+它从根地址 BFS 爬同源 HTML 页面（跳过 `/static/` `/media/` 二进制资源 ——
+那些由各页的子资源加载覆盖，`audit_page.js` 已在做），逐条报状态码与页面标题。
+
+**本项目线上实测**：11 个页面全部 `200` —— 首页、4 个分类筛选页、6 个详情页。
+
+### 工具自己也要被验证
+
+一个「零缺陷」的报告，如果没验证过工具有抓取能力，**等于什么都没说**。
+所以用一个**故意做坏**的页面做反向对照 —— 缺 `alt` 的图 + 指向 404 的图 +
+2400px 宽的 `div` + 空 `button` + 一句 `console.error` —— 确认 6 类缺陷全部被抓到、
+退出码为 `1`，这个脚本才算可信。
+
+> 同一类错误也发生在 `linkcheck.js` 身上：它的链接正则最初写成
+> `href\s*=\s*["']([^"'#]+)["']`，字符类里排除了 `#`。结果
+> `href="?category=materials#projects"` **整条匹配失败**（闭合引号前是 `#`），
+> 4 个分类筛选链接被静默丢掉，报告显示「共 7 个页面、全部 200」——
+> 看起来一片绿，实际漏了三分之一。**正确的做法是先连片段一起捕获、再把片段丢掉。**
+
+**本项目线上体检结果**（2026-10-16，`/` 与 `/project/gesture-hci/` 各跑 1440 / 768 / 375 三档）：
 
 | 检查项 | 结果 |
 |---|---|
@@ -477,6 +518,47 @@ SERVER_CMD="python manage.py runserver 0.0.0.0:8000 --insecure" bash deploy/star
 
 配置完成后可用 `python manage.py check --deploy` 自检：
 注入合规的随机密钥后应输出 **`no issues`**（本项目已实测通过）。
+
+### 媒体文件为什么不用 `django.views.static.serve`
+
+`/media/` 下的演示视频走的是本项目自己的 `showcase/media.py`，不是 Django 自带的
+`django.views.static.serve`。原因是后者**不支持 HTTP Range 请求** ——
+它底层是 `FileResponse`，而 Django 3.2 的 `FileResponse` 既不返回 `Accept-Ranges`
+也不处理 `Range` 头（官方文档因此把它标注为「不适合生产环境」）。
+
+对图片没影响，对 `<video>` 是硬伤：浏览器无法按字节区间请求，**进度条拖不动**。
+实测同一台服务器上的对比：
+
+| 资源 | 托管方 | `Range: bytes=0-99` 的响应 |
+|---|---|---|
+| `/static/css/style.css` | WhiteNoise | `206` + `Content-Range: bytes 0-99/36043` |
+| `/media/videos/*.mp4`（修复前） | `django.views.static.serve` | `200` + 全量 2333314 B |
+| `/media/videos/*.mp4`（修复后） | `showcase.media.serve_media` | `206` + `Content-Range: bytes 0-99/2333314` |
+
+`serve_media` 按 RFC 7233 实现单段 Range：
+
+| 请求 | 响应 |
+|---|---|
+| 无 `Range` / 语法错误 / 多段 Range | `200` + 全量 + `Accept-Ranges: bytes` |
+| `bytes=0-99` | `206` + `Content-Range: bytes 0-99/<size>` |
+| `bytes=1000-` | `206`，到文件末尾 |
+| `bytes=-100`（末尾 100 字节） | `206` + `Content-Range: bytes <size-100>-<size-1>/<size>` |
+| `bytes=<size>-`（越界） | `416` + `Content-Range: bytes */<size>` |
+| `If-Modified-Since` 命中 | `304` |
+
+另外三处刻意的设计：
+
+* **开发与生产共用同一个视图**。如果本地用 `static()`、线上用别的，就会出现
+  「本地好好的、上线才发现视频拖不动」这类只在部署后暴露的差异。
+* **开关判断放在视图内，而不是 `urls.py` 里决定要不要注册路由**。路由表在模块
+  **导入时**就建好了，之后改 settings 不生效 —— 那既是个隐蔽的坑
+  （测试里 `override_settings` 不起作用），也让这条路由永远测不到。
+* **路径校验用 `realpath` 而非 `normpath`**，因此不只挡 `../` 穿越，
+  也挡「目录内的软链指向根目录之外」这种更隐蔽的越权。
+
+> **多段 Range 与 `If-Range` 没做**，都是可选项：前者按规范允许的方式降级成
+> `200` 全量，后者只是少了断点续传时的版本校验。实现 `multipart/byteranges`
+> 的复杂度不值得。
 
 ### 正式部署还要做的
 
