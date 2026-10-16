@@ -494,6 +494,46 @@ SERVER_CMD="python manage.py runserver 0.0.0.0:8000 --insecure" bash deploy/star
 
 `--insecure` 不能省：`DEBUG=0` 时 runserver 不发静态文件。
 
+### ⚠️ 发布到托管平台时必须显式指定启动命令
+
+**`deploy/start.sh` 不会自动被执行。** 发布平台是**探测**项目结构后自己挑一条启动
+命令的，它挑了 `runserver` —— 于是 `DJANGO_DEBUG` 与 `DJANGO_ALLOWED_HOSTS`
+都没被注入，线上实际跑在 `DEBUG=True` + 默认 `ALLOWED_HOSTS` 下。
+
+后果不是「页面难看」，而是**站点直接 400**：
+
+```
+DisallowedHost at /
+Invalid HTTP_HOST header: '<你的域名>'.
+You may need to add '<你的域名>' to ALLOWED_HOSTS.
+```
+
+而且因为 `DEBUG=True`，返回的是一张**完整的 Django 调试错误页** ——
+里面带着源码片段、Python 路径、Django 版本。这既是故障，也是信息泄露。
+
+修法：发布时把启动命令显式传进去（`startCmd`），别依赖探测：
+
+```
+startCmd = bash deploy/start.sh
+```
+
+**每次发布都要传。** 发布平台不会记住上一次的覆盖值，
+只传一次的话下一次会退回自动探测，故障重现。
+
+自检方式：拿到线上地址后先看响应头里有没有 `X-Frame-Options: DENY` ——
+它是 `DEBUG=False` 时才会加的；没有就说明 `start.sh` 没跑起来。
+
+```bash
+curl -sI https://<你的域名>/ | grep -i x-frame-options
+# 期望：X-Frame-Options: DENY
+```
+
+> 顺带一个教训：这条故障是在「改动看起来与启动无关」的情况下出现的 ——
+> 我只是改了 `urls.py` 和新增了一个媒体视图，却把站点打成了 400。
+> 原因是**发布动作本身**会重建进程、重新探测启动命令，
+> 于是把一直潜伏的配置问题暴露了出来。
+> 所以**每次发布后都要重新核验，而不是假定「上次好过这次也会好」**。
+
 ### 环境变量
 
 | 变量 | 说明 |
@@ -578,6 +618,9 @@ SERVER_CMD="python manage.py runserver 0.0.0.0:8000 --insecure" bash deploy/star
 就是按上面的方式跑起来的：单端口沙箱 + `deploy/start.sh`，
 数据库用仓库同级的 SQLite（启动时若为空会自动补种子数据）。
 
+发布时**必须显式传启动命令** `startCmd = bash deploy/start.sh`
+（原因见上一节 —— 不传就会退回自动探测，站点会以 `DEBUG=True` 起来并 400）。
+
 线上域名还没最终定下来，所以刻意保持了两个「先关掉」：
 
 - `DJANGO_HSTS_SECONDS=0` —— HSTS 一旦被浏览器记住，**在到期前撤不掉**，
@@ -586,6 +629,16 @@ SERVER_CMD="python manage.py runserver 0.0.0.0:8000 --insecure" bash deploy/star
   `canonical` / sitemap 都自动用上真实域名（已实测确认）。
 
 **换成正式域名后**，把这两个值配上即可，分享卡片与 sitemap 会自动跟着换。
+
+线上实测（2026-10-16，发布后逐条核验）：
+
+| 项目 | 结果 |
+|---|---|
+| 11 个页面（首页 + 4 个筛选页 + 6 个详情页） | 全部 `200` |
+| 首页 / 详情页体检（1440 / 768 / 375） | 控制台报错 0、请求失败 0、裂图 0、横向溢出 0px |
+| `Accept-Ranges` / `206` / `416` | 均正确，视频进度条可拖动 |
+| 演示视频完整下载 | 2,333,314 字节，sha256 与本地一致 |
+| `X-Frame-Options` | `DENY`（确认 `DEBUG=False`） |
 
 ---
 
