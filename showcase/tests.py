@@ -10,7 +10,9 @@
 import io
 import shutil
 import tempfile
+import unittest
 
+import django
 from PIL import Image as PILImage
 from django.contrib.staticfiles import finders
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -320,12 +322,18 @@ class SeedDataTestCase(TestCase):
                 self.assertEqual(project.cover_image_url, f.url if f else '')
 
     # ---------- 截断省略号 ----------
+    @unittest.skipUnless(django.VERSION[:2] == (3, 2),
+                         '记录的是 Django 3.2 的具体行为，换版本请重新评估')
     def test_builtin_truncatechars_loses_ellipsis_in_chinese(self):
-        """记录坑：中文下内置 truncatechars 不加省略号。
+        """记录坑：Django 3.2 + 中文环境下，内置 truncatechars 不加省略号。
 
-        这不是我们的代码有问题，是 Django 3.2 的截断尾巴走了本地化字符串，
-        而 zh-hans / zh-hant 的译文是空串。写这个测试是为了让后来人一眼看到
-        「为什么不用内置过滤器」，而不是把它当成可以随手换回去的实现细节。
+        这不是我们的代码有问题，是截断尾巴走了本地化字符串
+        （pgettext('String to return when truncating text', '%(truncated_text)s…')），
+        而 zh-hans / zh-hant 的译文是空串。
+
+        写这个测试是为了让后来人一眼看到「为什么不用内置过滤器」，
+        而不是把它当成可以随手换回去的实现细节。
+        升级 Django 后这个测试会自动跳过 —— 那时请重新确认一次。
         """
         from django.template.defaultfilters import truncatechars
         from django.utils import translation

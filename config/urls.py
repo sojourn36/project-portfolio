@@ -4,8 +4,9 @@ from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin
 from django.contrib.sitemaps.views import sitemap
-from django.urls import include, path
+from django.urls import include, path, re_path
 from django.views.generic import TemplateView
+from django.views.static import serve
 
 from showcase.sitemaps import ProjectSitemap, StaticViewSitemap
 
@@ -30,10 +31,17 @@ urlpatterns = [
          name='robots'),
 ]
 
-# 开发环境下由 Django 直接提供演示视频等媒体文件
-# 静态文件（CSS/JS）由 django.contrib.staticfiles 在 runserver 时自动接管
+# 媒体文件（演示视频 / 实机截图）由谁托管：
+# - DEBUG：django.conf.urls.static.static() 只在 DEBUG 下返回路由，够用
+# - 部署到单端口环境、前面没有 Nginx 时：用 DJANGO_SERVE_MEDIA=1 显式打开
+#   （static() 在 DEBUG=False 时返回空列表，所以这里要另走 serve 视图）
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+elif getattr(settings, 'SERVE_MEDIA', False):
+    urlpatterns += [
+        re_path(r'^media/(?P<path>.*)$', serve,
+                {'document_root': settings.MEDIA_ROOT}),
+    ]
 
 admin.site.site_header = '作品集管理后台'
 admin.site.site_title = '作品集管理'

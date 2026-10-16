@@ -3,8 +3,11 @@ Django settings — 项目展示界面（作品集）
 基于 Django 3.2 / Python 3.8
 """
 
-from pathlib import Path
+import importlib.util
 import os
+from pathlib import Path
+
+import django
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -44,15 +47,31 @@ INSTALLED_APPS = [
     'showcase',
 ]
 
-MIDDLEWARE = [
-    'django.middleware.security.SecurityMiddleware',
-    'django.contrib.sessions.middleware.SessionMiddleware',
-    'django.middleware.common.CommonMiddleware',
-    'django.middleware.csrf.CsrfViewMiddleware',
-    'django.contrib.auth.middleware.AuthenticationMiddleware',
-    'django.contrib.messages.middleware.MessageMiddleware',
-    'django.middleware.clickjacking.XFrameOptionsMiddleware',
-]
+def _build_middleware():
+    """组装 MIDDLEWARE 链，按「是否装了 whitenoise」决定插不插静态文件中间件。
+
+    为什么要这样写：本地开发环境（Anaconda python38 + Django 3.2）没有
+    whitenoise 也能正常跑，而部署环境会从 requirements.txt 把它装上。
+    硬写 'whitenoise.middleware.WhiteNoiseMiddleware' 的话，
+    没装的机器一启动就 ModuleNotFoundError。
+    """
+    chain = ['django.middleware.security.SecurityMiddleware']
+    if importlib.util.find_spec('whitenoise') is not None:
+        # 紧跟 SecurityMiddleware：让应用自己在单端口内托管 /static/，
+        # 部署时不必再挂一个 Nginx 只为发静态文件。
+        chain.append('whitenoise.middleware.WhiteNoiseMiddleware')
+    chain += [
+        'django.contrib.sessions.middleware.SessionMiddleware',
+        'django.middleware.common.CommonMiddleware',
+        'django.middleware.csrf.CsrfViewMiddleware',
+        'django.contrib.auth.middleware.AuthenticationMiddleware',
+        'django.contrib.messages.middleware.MessageMiddleware',
+        'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    ]
+    return chain
+
+
+MIDDLEWARE = _build_middleware()
 
 ROOT_URLCONF = 'config.urls'
 
@@ -112,9 +131,20 @@ STATIC_URL = '/static/'
 STATICFILES_DIRS = [BASE_DIR / 'static']
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
+# WhiteNoise：装了才生效（见 _build_middleware）。
+# 这两个开关是为「部署到单端口沙箱、不方便先跑 collectstatic」准备的 ——
+# 直接走 staticfiles finders 从 STATICFILES_DIRS 找文件。
+# 正式上 Nginx / CDN 的部署请关掉它们，改跑 collectstatic。
+WHITENOISE_USE_FINDERS = os.environ.get('DJANGO_WHITENOISE_FINDERS', '0') == '1'
+WHITENOISE_AUTOREFRESH = WHITENOISE_USE_FINDERS
+
 # 演示视频等上传文件
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+
+# 由 Django 自己托管 /media/。默认只在 DEBUG 下开（见 config/urls.py）；
+# 部署到单端口沙箱、前面没有 Nginx 时需要显式打开。
+SERVE_MEDIA = os.environ.get('DJANGO_SERVE_MEDIA', '0') == '1'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.AutoField'
 
@@ -135,14 +165,32 @@ SITE_URL = os.environ.get('DJANGO_SITE_URL', '').rstrip('/')
 # --------------------------------------------------------------------------
 if not DEBUG:
     SECURE_CONTENT_TYPE_NOSNIFF = True
-    SECURE_BROWSER_XSS_FILTER = True
+    # SECURE_BROWSER_XSS_FILTER 在 Django 4.0 已被移除（现代浏览器不需要它了）。
+    # 只在旧版本上设置，免得在 4.x / 5.x 上凭空多一条无意义的告警。
+    if django.VERSION < (4, 0):
+        SECURE_BROWSER_XSS_FILTER = True
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     X_FRAME_OPTIONS = 'DENY'
-    SECURE_HSTS_SECONDS = 31536000
-    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+
+    # 反向代理终止 TLS 时，代理会用这个头告诉 Django「原始请求是 https」。
+    # 不配它的话 request.is_secure() 永远是 False，
+    # 一旦开了 SECURE_SSL_REDIRECT 就会 301 → 301 死循环。
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+    # HSTS：告诉浏览器「以后这个域名只准走 https」。
+    # 注意 SECURE_HSTS_SECONDS 一旦被浏览器记住，在到期前**撤不掉**。
+    # 因此绑到环境变量上，域名还没定下来时可以先设 0 关掉。
+    SECURE_HSTS_SECONDS = int(os.environ.get('DJANGO_HSTS_SECONDS', '31536000'))
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = SECURE_HSTS_SECONDS > 0
     # HSTS preload 指令：只有带上它，域名才能被提交到浏览器的预加载列表
     # （属强承诺，一旦收录撤销很慢）。不想用可设 DJANGO_HSTS_PRELOAD=0。
-    SECURE_HSTS_PRELOAD = os.environ.get('DJANGO_HSTS_PRELOAD', '1') == '1'
-    # 若前置了反向代理并已终止 TLS，可设 DJANGO_SECURE_SSL_REDIRECT=0 关闭
+    SECURE_HSTS_PRELOAD = (
+        SECURE_HSTS_SECONDS > 0
+        and os.environ.get('DJANGO_HSTS_PRELOAD', '1') == '1'
+    )
+
+    # 若前置了反向代理并已终止 TLS，可设 DJANGO_SECURE_SSL_REDIRECT=0 关闭。
+    # 没配 SECURE_PROXY_SSL_HEADER 而代理又没转发原始协议时，
+    # 开着它会造成重定向死循环 —— 拿不准就先关。
     SECURE_SSL_REDIRECT = os.environ.get('DJANGO_SECURE_SSL_REDIRECT', '1') == '1'

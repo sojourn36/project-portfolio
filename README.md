@@ -84,6 +84,7 @@
 | 模板 | Django Template Language |
 | 前端 | 原生 HTML5 / CSS3（变量 + Grid + Flex）/ ES6，无任何第三方依赖 |
 | 媒体服务 | Django `MEDIA_URL` / `MEDIA_ROOT` 静态媒体托管 |
+| 部署 | Gunicorn（WSGI 服务器）+ WhiteNoise（自托管 `/static/`），见 `deploy/start.sh` |
 | 图片处理 | Pillow（Django `ImageField` 的硬依赖，缺则 `migrate` 报 `fields.E210`） |
 | 测试 | Django `TestCase` |
 
@@ -143,6 +144,8 @@ project-portfolio/
 │   ├── urls.py                      # 路由入口（含媒体文件服务）
 │   ├── asgi.py
 │   └── wsgi.py
+├── deploy/
+│   └── start.sh                     # 部署启动脚本（migrate → seed → collectstatic → gunicorn）
 ├── showcase/                        # 核心应用
 │   ├── models.py                    # 数据模型
 │   ├── views.py                     # home() 首页聚合 + detail() 详情页 + page_not_found()
@@ -375,38 +378,61 @@ python manage.py test showcase -v 2
 
 ## 部署
 
-生产环境注意事项：
+### 一条命令起服务
 
-1. **注入环境变量**（不要把密钥写进代码）：
+生产模式的启动涉及七八个环境变量，靠部署时现敲容易漏、也没法本地复现，
+所以固化成了 `deploy/start.sh`：
 
-   | 变量 | 说明 |
-   |---|---|
-   | `DJANGO_SECRET_KEY` | 密钥，**务必更换**（保持 `django-insecure-` 前缀会被 `check --deploy` 判为 W009） |
-   | `DJANGO_DEBUG` | 设为 `0` 关闭调试 |
-   | `DJANGO_ALLOWED_HOSTS` | 逗号分隔的域名列表 |
-   | `DJANGO_SITE_URL` | **正式域名**，如 `https://portfolio.example.com`。分享卡片的 `og:url` / `og:image`、`canonical`、`robots.txt` 里的 Sitemap 地址都由它拼出；留空则回退到请求地址（本地开发够用，**上线后必须配**，否则代理后面会拼出内网地址或 http） |
-   | `DJANGO_SECURE_SSL_REDIRECT` | 已由反向代理终止 TLS 时设为 `0` |
-   | `DJANGO_HSTS_PRELOAD` | 默认开启；不想被浏览器 HSTS 预加载列表收录时设为 `0` |
+```bash
+PORT=8000 bash deploy/start.sh
+```
 
-   `DJANGO_DEBUG=0` 时会自动启用 HSTS（1 年 + 含子域 + preload 指令）、
-   Secure Cookie、`X_FRAME_OPTIONS=DENY`、`SECURE_CONTENT_TYPE_NOSNIFF` 等安全项。
+它按顺序做四件事：`migrate` → 数据库为空则补 `seed_projects` → `collectstatic`
+→ 以 gunicorn 监听 `0.0.0.0:$PORT`。本地想验证生产模式可以换成 runserver
+（Windows 跑不了 gunicorn）：
 
-   > **本地想验证生产配置**：`DJANGO_DEBUG=0` 下 `SECURE_SSL_REDIRECT` 默认为开，
-   > http 会被 301 到 https。本地看页面需同时设 `DJANGO_SECURE_SSL_REDIRECT=0`，
-   > 并给 `runserver` 加 `--insecure`（否则 `DEBUG=False` 时静态文件不由 Django 提供）。
-   >
-   > ```bash
-   > DJANGO_DEBUG=0 DJANGO_SECURE_SSL_REDIRECT=0 python manage.py runserver --insecure
-   > ```
+```bash
+SERVER_CMD="python manage.py runserver 0.0.0.0:8000 --insecure" bash deploy/start.sh
+```
 
-   配置完成后可用 `python manage.py check --deploy` 自检：
-   注入合规的随机密钥后应输出 **`no issues`**（本项目已实测通过）。
+`--insecure` 不能省：`DEBUG=0` 时 runserver 不发静态文件。
 
-2. **收集静态文件**：`python manage.py collectstatic`（实测 131 个文件）
+### 环境变量
 
-3. **换用生产数据库**：把 `DATABASES` 切到 PostgreSQL 等，并重新执行 `migrate` + `seed_projects`。
+| 变量 | 说明 |
+|---|---|
+| `DJANGO_SECRET_KEY` | 密钥，**务必更换**（保持 `django-insecure-` 前缀会被 `check --deploy` 判为 W009）。`start.sh` 里没注入会现场随机生成一个 |
+| `DJANGO_DEBUG` | 设为 `0` 关闭调试 |
+| `DJANGO_ALLOWED_HOSTS` | 逗号分隔的域名列表，`start.sh` 默认给 `*` |
+| `DJANGO_SITE_URL` | **正式域名**，如 `https://portfolio.example.com`。分享卡片的 `og:url` / `og:image`、`canonical`、`robots.txt` 里的 Sitemap 地址都由它拼出；留空则回退到请求地址（本地开发够用，**上线后建议配**，否则代理后面可能拼出内网地址或 http） |
+| `DJANGO_SECURE_SSL_REDIRECT` | 已由反向代理终止 TLS 时设为 `0`。**开着它而代理又没转发 `X-Forwarded-Proto` 会造成 301 死循环**，拿不准就先关 |
+| `DJANGO_HSTS_SECONDS` | 默认 `31536000`（1 年）。HSTS 一旦被浏览器记住，**在到期前撤不掉** —— 域名没最终定下来时先设 `0` |
+| `DJANGO_HSTS_PRELOAD` | 默认开启；不想被浏览器 HSTS 预加载列表收录时设为 `0` |
+| `DJANGO_SERVE_MEDIA` | 设为 `1` 让 Django 自己托管 `/media/`（单端口部署、前面没有 Nginx 时需要） |
+| `DJANGO_WHITENOISE_FINDERS` | 设为 `1` 让 WhiteNoise 直接走 staticfiles finders、跳过 `collectstatic`（逃生口，正式部署不必开） |
 
-4. **媒体与静态文件**由 Nginx / 对象存储托管，不要让 Django 在 `DEBUG=False` 下直接服务。
+`DJANGO_DEBUG=0` 时会自动启用 Secure Cookie、`X_FRAME_OPTIONS=DENY`、
+`SECURE_CONTENT_TYPE_NOSNIFF`、`SECURE_PROXY_SSL_HEADER` 等安全项。
+
+> **本地想验证生产配置**：`DJANGO_DEBUG=0` 下 `SECURE_SSL_REDIRECT` 默认为开，
+> http 会被 301 到 https。本地看页面需同时设 `DJANGO_SECURE_SSL_REDIRECT=0`，
+> 并给 `runserver` 加 `--insecure`（否则 `DEBUG=False` 时静态文件不由 Django 提供）。
+> 用 `deploy/start.sh` + `SERVER_CMD` 覆盖就能一步到位（见上一节）。
+
+配置完成后可用 `python manage.py check --deploy` 自检：
+注入合规的随机密钥后应输出 **`no issues`**（本项目已实测通过）。
+
+### 正式部署还要做的
+
+1. **换用生产数据库**：把 `DATABASES` 切到 PostgreSQL 等，并重新执行 `migrate` + `seed_projects`。
+2. **静态与媒体文件**交给 Nginx / 对象存储，不要让 Django 自己发 ——
+   那时把 `DJANGO_SERVE_MEDIA` 关掉，并跑 `collectstatic`。
+3. **配好 `DJANGO_SITE_URL` 与 `DJANGO_HSTS_SECONDS`**：域名定下来之后再开 HSTS。
+
+> **本机架构说明**：`deploy/start.sh` 是按「单端口沙箱 / 小型 PaaS」写的 ——
+> gunicorn + WhiteNoise 自托管静态文件、Django 自托管媒体文件。
+> 这是为了让一个 Django 应用在**只有一个 HTTP 端口**的环境里也能完整跑起来，
+> 不是为了替代 Nginx + CDN 的标准生产架构。
 
 ---
 

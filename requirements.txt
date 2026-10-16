@@ -1,6 +1,20 @@
 # 作品集站点运行依赖
+#
 # 注意：Project.cover_image / demo_image / ProjectShot.image 都是 ImageField，
 # 而 Django 的 ImageField 强依赖 Pillow —— 缺了它 migrate 会直接报
 # fields.E210: Cannot use ImageField because Pillow is not installed
-Django>=3.2,<4.0
 Pillow>=8.0
+
+# Django 按解释器版本分档：Django 3.2（本地开发用的 LTS）只支持到 Python 3.10，
+# 在 3.11+ 上会因为标准库 cgi 被移除而直接启动失败。部署环境的 Python 版本
+# 不由我们决定，所以这里用环境标记让它自动挑一个能跑的组合。
+Django>=3.2,<4.0; python_version < "3.11"
+Django>=4.2,<5.2; python_version >= "3.11"
+
+# ---- 下面两个只在部署时用到，本地开发不装也能跑 ----
+# WhiteNoise：让应用自己在单端口内托管 /static/，省掉一层 Nginx。
+# 没装时 config/settings.py 会自动跳过该中间件（见 _build_middleware）。
+whitenoise>=6.0
+
+# Gunicorn：WSGI 应用服务器（Linux）。Windows 上跑不了，本地开发用 runserver。
+gunicorn>=20.1
