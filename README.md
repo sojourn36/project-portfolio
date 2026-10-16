@@ -78,10 +78,14 @@
 - **可被搜索引擎收录** — 自带 `robots.txt`（屏蔽 `/admin/`）与
   `sitemap.xml`（首页 + 全部项目详情页，`lastmod` 取项目更新时间）。
 - **零前端依赖** — 原生 HTML / CSS / JavaScript，无框架、无 CDN，**可完全离线运行**。
-- **38 项自动化测试** — 覆盖首页各区块、分类筛选与非法参数回退、空态提示、
+- **内容安全策略（CSP）** — 全站输出严格策略（不含 `'unsafe-inline'` / `'unsafe-eval'`，
+  不点名任何第三方主机），并且**实测拦得住托管平台网关注入的第三方埋点脚本**；
+  `/admin/` 豁免。详见「[内容安全策略（CSP）](#内容安全策略csp一个不请自来的脚本)」。
+- **77 项自动化测试** — 覆盖首页各区块、分类筛选与非法参数回退、空态提示、
   6 个详情页渲染、视频嵌入、实机图集渲染与空态、卡片封面取值优先级、
   翻页与同类推荐、404（含自定义 404 页）、后台登录保护、
   分享卡片元信息与 `SITE_URL` 生效、`robots.txt` / `sitemap.xml`、
+  媒体文件的 Range 行为、CSP 策略，
   以及「模板语法不得泄漏」与「截断必须带省略号」两条防回归断言。
 
 ---
@@ -95,7 +99,8 @@
 | 数据库 | SQLite（开箱即用，可平滑换 PostgreSQL） |
 | 模板 | Django Template Language |
 | 前端 | 原生 HTML5 / CSS3（变量 + Grid + Flex）/ ES6，无任何第三方依赖 |
-| 媒体服务 | Django `MEDIA_URL` / `MEDIA_ROOT` 静态媒体托管 |
+| 媒体服务 | Django `MEDIA_URL` / `MEDIA_ROOT` 静态媒体托管（自实现，支持 HTTP Range） |
+| 安全 | Django 安全中间件 + 自实现 CSP 中间件（`showcase/middleware.py`） |
 | 部署 | Gunicorn（WSGI 服务器）+ WhiteNoise（自托管 `/static/`），见 `deploy/start.sh` |
 | 图片处理 | Pillow（Django `ImageField` 的硬依赖，缺则 `migrate` 报 `fields.E210`） |
 | 测试 | Django `TestCase` |
@@ -166,7 +171,8 @@ project-portfolio/
 │   ├── context_processors.py        # site_url / og_image_url（分享卡片要绝对地址）
 │   ├── sitemaps.py                  # sitemap.xml 收录规则
 │   ├── media.py                     # 媒体文件视图（支持 Range，视频进度条能拖）
-│   ├── tests.py                     # 63 项冒烟测试
+│   ├── middleware.py                # 内容安全策略（CSP）—— 挡掉网关注入的埋点
+│   ├── tests.py                     # 77 项冒烟测试
 │   ├── migrations/
 │   ├── management/commands/
 │   │   └── seed_projects.py         # 数据导入命令（支持 --reset）
@@ -193,9 +199,10 @@ project-portfolio/
     ├── screenshots/                 # 界面截图
     └── tools/
         ├── make_og_cover.py         # 分享大图生成脚本（资料改了重跑一次）
-        ├── audit_page.js            # 单页体检（控制台报错 / 404 / 裂图 / 横向溢出）
+        ├── audit_page.js            # 单页体检（控制台报错 / 404 / 裂图 / 横向溢出 / 传输量）
         ├── linkcheck.js             # 全站爬取（逐页状态码 + 标题）
-        └── video_probe.js           # 浏览器里验证视频进度条能不能拖（Range 是否真生效）
+        ├── video_probe.js           # 浏览器里验证视频进度条能不能拖（Range 是否真生效）
+        └── csp_probe.js             # 浏览器里验证 CSP 真拦住了什么（带对照组）
 ```
 
 ---
@@ -363,7 +370,8 @@ python manage.py test showcase -v 2
 6 个详情页渲染、视频嵌入、实机图集渲染与「无截图时不渲染」、截图排序、
 翻页与同类推荐、404 与自定义 404 页（`override_settings(DEBUG=False)`）、后台登录保护、
 分享卡片元信息（绝对地址 / 默认图 / `SITE_URL` 生效 / 详情页真实封面尺寸）、
-`robots.txt` 与 `sitemap.xml`、**媒体文件的 Range 行为**（23 项，见下）。
+`robots.txt` 与 `sitemap.xml`、**媒体文件的 Range 行为**（23 项，见下）、
+**CSP 策略**（14 项，见下）。
 
 另有三条**防回归**断言，各自对应一个踩过的坑：
 
@@ -384,6 +392,23 @@ python manage.py test showcase -v 2
 > 后面的全部漏掉，所有断言照样通过。补了一条用 130 KB 夹具（跨 3 个块）
 > 的用例才真正覆盖到分块路径。
 > **夹具尺寸必须跨过被测代码的阈值，否则测的是「没报错」，不是「对」。**
+
+CSP 的 14 项测试钉住的是「策略别被悄悄放松」：首页 / 详情页 / 404 / `robots.txt` /
+`sitemap.xml` / 分类筛选页都带上头、策略里**不得出现** `'unsafe-inline'`、
+`'unsafe-eval'`、`data:`、`blob:`、`'strict-dynamic'` 或任何具体主机名、
+指令集合整体钉死（少一条就报错）、`https` 才加 `upgrade-insecure-requests`、
+admin 豁免、`CSP_ENABLED=False` 可关、视图自设的头不被覆盖，
+以及一条「加了 CSP 后媒体 Range 依旧正常」的回归断言。
+
+> 这一组测试自己抓到过一个真问题：`img-src` 最初写的是 `'self' data:`，
+> 而「不得出现 `data:`」的断言当场失败。核对后发现全站 **0 处**使用 data-URI，
+> 那条放行纯属白送 —— 于是删掉放行、而不是放宽测试。
+> **一个连自己都拦不住的策略测试，是没有价值的。**
+
+> 另一个反例来自这组测试的**继承关系**：`ContentSecurityPolicyTestCase` 最初继承
+> `SeedDataTestCase`，于是那 38 个种子用例被**再跑一遍** —— Django 报出的用例数
+> 从 77 凭空变成 115，既慢又掩盖真实覆盖面。改成自己 `setUpTestData` 后
+> 数字才和 `grep -c 'def test_'` 对得上。**用例数虚高和用例数不足一样有害。**
 
 > **关于 `truncatechars`（值得单独记一笔）**：Django 3.2 的截断尾巴来自
 > `pgettext('String to return when truncating text', '%(truncated_text)s…')`，
@@ -465,6 +490,39 @@ node docs/tools/video_probe.js --url https://<你的域名>/project/<slug>/
 > 说明缺少 Range 时浏览器**完全无法 seek**，把 `currentTime` 设到 15.4s
 > 它纹丝不动。所以那不是「体验稍差」，而是**进度条彻底没用**。
 > 只靠 curl 看响应头得不出这个结论 —— 必须到浏览器层量。
+
+### `csp_probe.js` —— 在真实浏览器里验证 CSP 拦住了什么
+
+「响应头里有 `Content-Security-Policy`」和「策略真的拦住了脚本」也是两件事。
+这个脚本往已加载的页面里**动态插入**两段脚本（一段内联、一段用真实的
+`https://beacon.cdn.qq.com/sdk/4.5.9/beacon_web.min.js`），然后回答：
+内联脚本跑了吗、跨域脚本加载了吗、浏览器报了几条 CSP 违规、页面自己的
+`main.js` 还活着吗。
+
+**必须成对跑**，这是整个工具的重点：
+
+```bash
+# 1) 对照组：把 CSP 关掉，确认两段脚本确实能跑起来
+DJANGO_CSP=0 python manage.py runserver 127.0.0.1:8766
+node docs/tools/csp_probe.js --url http://127.0.0.1:8766/ --expect open
+
+# 2) 实验组：开着 CSP，同样的脚本应当被拦
+python manage.py runserver 127.0.0.1:8765
+node docs/tools/csp_probe.js --url http://127.0.0.1:8765/ --expect blocked
+```
+
+只跑一次证明不了任何事：脚本没加载，**可能是 CSP 挡的，也可能是那个域名根本不通**。
+对照组的作用就是把后一种可能排除掉。两次结果相反，才算证据。
+
+**本项目实测**（2026-10-16）：
+
+| | 对照组（`DJANGO_CSP=0`） | 实验组（CSP 开启） |
+|---|---|---|
+| 响应里的 CSP 头 | 无 | `default-src 'self'; script-src 'self'; …` |
+| 内联脚本执行 | `true` | **`false`** |
+| beacon 脚本加载 | `true` | **`false`**（`onerror`） |
+| 浏览器报的 CSP 违规 | 0 条 | **2 条**（内联一条 + 点名 `beacon.cdn.qq.com` 一条） |
+| 页面自身 `main.js` | alive | **alive**（没被误伤） |
 
 ### 工具自己也要被验证
 
@@ -577,6 +635,7 @@ curl -sI https://<你的域名>/ | grep -i x-frame-options
 | `DJANGO_HSTS_SECONDS` | 默认 `31536000`（1 年）。HSTS 一旦被浏览器记住，**在到期前撤不掉** —— 域名没最终定下来时先设 `0` |
 | `DJANGO_HSTS_PRELOAD` | 默认开启；不想被浏览器 HSTS 预加载列表收录时设为 `0` |
 | `DJANGO_SERVE_MEDIA` | 设为 `1` 让 Django 自己托管 `/media/`（单端口部署、前面没有 Nginx 时需要） |
+| `DJANGO_CSP` | 默认 `1`（开启 CSP）。设为 `0` 可整体关闭，用于排查「页面某处不生效」时做二分 |
 | `DJANGO_WHITENOISE_FINDERS` | 设为 `1` 让 WhiteNoise 直接走 staticfiles finders、跳过 `collectstatic`（逃生口，正式部署不必开） |
 
 `DJANGO_DEBUG=0` 时会自动启用 Secure Cookie、`X_FRAME_OPTIONS=DENY`、
@@ -631,6 +690,73 @@ curl -sI https://<你的域名>/ | grep -i x-frame-options
 > `200` 全量，后者只是少了断点续传时的版本校验。实现 `multipart/byteranges`
 > 的复杂度不值得。
 
+### 内容安全策略（CSP）：一个不请自来的脚本
+
+站点发布到托管平台后，网关会往 HTML 里**注入**一段腾讯 Beacon 埋点：
+
+```html
+<script src="https://beacon.cdn.qq.com/sdk/4.5.9/beacon_web.min.js"></script>
+<script>
+(function(){ try{ var beacon = new BeaconAction({appkey:'0WEB06U85YBSLJNL', …});
+  beacon.onDirectUserAction('preview_page_view', {
+    'url': location.href, 'referrer': document.referrer, 'title': document.title }); …
+</script>
+```
+
+它插在 `<link rel="stylesheet" href="/static/css/style.css">` 之后，
+**代码不在本仓库里** —— 模板和静态文件里 grep `beacon` 零命中，本地 `runserver`
+渲染也没有它（本地 30134 字节 vs 线上 30877 字节，差值就是这几行）。
+
+> **只靠读代码永远发现不了它。** 发现路径是：先用 `audit_page.js` 量页面传输量，
+> 在「最重的资源」里看到 `sdk/4.5.9/beacon_web.min.js`，再去核对本地渲染与线上
+> 响应的字节差。**这是一个必须拿真实响应去比对、而不是读源码就能得到的结论。**
+
+它的实际影响：站点每个访问者都会向 `beacon.cdn.qq.com` 上报当前 URL、来源页和标题。
+
+删是删不掉的（不是我们的模板产出的），能拦住它的位置只有浏览器侧。
+`showcase/middleware.py` 因此加了一条策略，其中 `script-src 'self'` 同时挡住两段：
+外链那段是**跨域**、内联那段没有 nonce，都不在 `'self'` 里。
+
+**为什么敢上不含 `'unsafe-inline'` 的严格版**：这种策略只有在页面确实没有内联脚本时
+才可用，否则要么页面坏、要么被迫退回 `'unsafe-inline'`（那就等于白设）。上线前对
+sitemap 的 7 个页面 + 4 个分类筛选页 + 自定义 404 + `robots.txt` 共 **13 个 URL**
+逐页核查：
+
+| 结构 | 数量 |
+|---|---|
+| `<script>` 标签 | 每页 **1** 个，且 src 为同源 `/static/js/main.js` |
+| 内联 `<script>` / `<style>` 块 / `style=` 内联样式 | 0 / 0 / 0 |
+| `on*=` 内联事件 / `javascript:` URL / `eval`·`new Function` | 0 / 0 / 0 |
+| 外域资源（script / img / link） | 0 |
+
+模板源码层也复核过（`grep -rc "style="` 四个模板全为 0）。策略内容：
+
+| 指令 | 值 | 作用 |
+|---|---|---|
+| `default-src` | `'self'` | 兜底：未显式提到的类型一律只允许同源 |
+| `script-src` | `'self'` | 挡住跨域脚本与内联脚本 |
+| `style-src` | `'self'` | — |
+| `img-src` / `font-src` / `media-src` / `connect-src` | `'self'` | 刻意**不写 `data:`**：全站 0 处 data-URI，留着只是白送一条放行 |
+| `form-action` | `'self'` | — |
+| `base-uri` | `'none'` | 防注入的 `<base>` 把页面所有相对地址劫持到别的域 |
+| `object-src` | `'none'` | `<object>`/`<embed>` 是已淘汰的插件入口，本站零使用 |
+| `frame-ancestors` | `'none'` | `X-Frame-Options: DENY` 的现代等价物；后者只在 `DEBUG=False` 时设，这条开发环境也生效 |
+| `upgrade-insecure-requests` | — | **只在 https 请求下加**：本地 http 加上它会把子资源强行升级，制造「本地才有、线上没有」的假故障 |
+
+三处刻意的取舍：
+
+* **`/admin/` 豁免**（`CSP_EXEMPT_PREFIXES`）。它不是对外面，加 CSP 零收益；
+  而后台的变更表单 / 内联编辑区 / 自动补全控件大量使用 `style=` 内联样式，
+  `style-src 'self'` 大概率会把它们打坏。实测线上（Django 5.1.15）的
+  `/admin/login/` 确实没有内联脚本，但那**只覆盖了登录页一个页面**，
+  不足以推广到整个后台。
+* **`DJANGO_CSP=0` 可整体关闭**，用于排查「页面某处不生效」时做二分。
+* 中间件**不覆盖视图已自行设置的头**，给「某个视图想要更严的策略」留余地。
+
+顺带一个实测发现：网关把 beacon **也**注入了 admin 页面（线上 `/admin/login/`
+共 4 个 `<script>`，其中唯一那个内联的就是 beacon）。admin 既然豁免，那里的
+beacon 依旧会加载 —— 它只在主人自己登录后台时触发，不涉及访问者，因此没有处理。
+
 ### 正式部署还要做的
 
 1. **换用生产数据库**：把 `DATABASES` 切到 PostgreSQL 等，并重新执行 `migrate` + `seed_projects`。
@@ -660,6 +786,10 @@ curl -sI https://<你的域名>/ | grep -i x-frame-options
   `canonical` / sitemap 都自动用上真实域名（已实测确认）。
 
 **换成正式域名后**，把这两个值配上即可，分享卡片与 sitemap 会自动跟着换。
+
+> **CSP 尚未上线。** `showcase/middleware.py` 的 CSP 已提交，并已通过本地浏览器
+> 实测（对照组 / 实验组见上表），但**还没有重新发布** —— 所以当前线上站点依然带着
+> 平台注入的埋点。重新发布后本节需要同步更新。
 
 线上实测（2026-10-16，发布后逐条核验）：
 

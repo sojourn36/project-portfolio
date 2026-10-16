@@ -67,6 +67,9 @@ def _build_middleware():
         'django.contrib.auth.middleware.AuthenticationMiddleware',
         'django.contrib.messages.middleware.MessageMiddleware',
         'django.middleware.clickjacking.XFrameOptionsMiddleware',
+        # 放在链尾：响应阶段它是**最先**跑的那个，随后外层中间件（如
+        # XFrameOptionsMiddleware）仍有机会调整自己的头，互不干扰。
+        'showcase.middleware.ContentSecurityPolicyMiddleware',
     ]
     return chain
 
@@ -151,6 +154,20 @@ DEFAULT_AUTO_FIELD = 'django.db.models.AutoField'
 # 大文件上传（演示视频）
 DATA_UPLOAD_MAX_MEMORY_SIZE = 200 * 1024 * 1024   # 200 MB
 FILE_UPLOAD_MAX_MEMORY_SIZE = 200 * 1024 * 1024
+
+# --------------------------------------------------------------------------
+# 内容安全策略（CSP）
+# --------------------------------------------------------------------------
+# 为什么需要它，见 showcase/middleware.py 的模块文档 —— 一句话版本：
+# 发布平台会在网关层往 HTML 里注入一段腾讯 Beacon 埋点（上报 url/referrer/title），
+# 代码不在本仓库里、grep 不到，只能靠浏览器侧的 CSP 拦。
+# script-src 'self' 同时挡住它的外链段（跨域）和内联段（无 nonce）。
+#
+# DJANGO_CSP=0 可整体关掉（排查「页面某处不生效」时用来快速二分）。
+CSP_ENABLED = os.environ.get('DJANGO_CSP', '1') == '1'
+# /admin/ 豁免：它不是对外面，加 CSP 零收益；且后台大量用 style= 内联样式，
+# 严格策略会打坏它。豁免是刻意的（理由与实测依据见 showcase/middleware.py）。
+CSP_EXEMPT_PREFIXES = ('/admin/',)
 
 # --------------------------------------------------------------------------
 # 站点绝对地址（社交分享卡片 og:url / og:image / sitemap.xml 用）

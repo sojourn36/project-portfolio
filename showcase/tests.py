@@ -19,6 +19,7 @@ from django.conf import settings
 from django.contrib.staticfiles import finders
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
+from django.http import HttpResponse
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import translation
@@ -675,3 +676,158 @@ class MediaRangeTestCase(TestCase):
         self.assertEqual(part.status_code, 206)
         self.assertEqual(part['Content-Range'], 'bytes 0-1023/%d' % size)
         self.assertEqual(len(self._body(part)), 1024)
+
+
+class ContentSecurityPolicyTestCase(TestCase):
+    """CSP 头的行为与内容。
+
+    背景：发布平台会在网关层往 HTML 注入一段腾讯 Beacon 埋点，代码不在本仓库里。
+    拦它的唯一位置是浏览器侧，而 ``script-src 'self'`` 同时挡住它的外链段
+    （跨域）和内联段（无 nonce）。这些用例钉住的就是这条策略别被悄悄放松。
+
+    这里**不继承 SeedDataTestCase**：那样会把这 38 个种子用例再跑一遍
+    （Django 报的用例数会凭空多 38 条，既慢又掩盖真实覆盖面）。
+    本类只在需要真实项目的地方自己导数据。
+    """
+
+    HEADER = 'Content-Security-Policy'
+
+    @classmethod
+    def setUpTestData(cls):
+        # 详情页要有一条真实项目才测得到真页面，否则测到的是 404 页
+        call_command('seed_projects', verbosity=0)
+
+    def _policy(self, url, **kwargs):
+        response = self.client.get(url, **kwargs)
+        self.assertIn(self.HEADER, response, '响应缺少 CSP 头: %s' % url)
+        return response[self.HEADER]
+
+    def _directives(self, policy):
+        """把 CSP 头解析成 {指令名: 值} —— 顺便验证它本身是合法可解析的。"""
+        out = {}
+        for part in policy.split(';'):
+            part = part.strip()
+            if not part:
+                continue
+            name, _, value = part.partition(' ')
+            self.assertNotIn(name, out, '指令重复: %s' % name)
+            self.assertEqual(name, name.lower(), '指令名必须小写: %s' % name)
+            out[name] = value.strip()
+        return out
+
+    # ---------- 存在性与覆盖面 ----------
+    def test_home_carries_csp(self):
+        self.assertIn("script-src 'self'", self._policy(reverse('showcase:home')))
+
+    def test_every_public_surface_is_covered(self):
+        """首页 / 详情页 / 404 / robots / sitemap 都要带上，别只覆盖首页。"""
+        urls = [
+            reverse('showcase:home'),
+            reverse('showcase:detail', args=['subway-risk-decision']),
+            '/robots.txt',
+            '/sitemap.xml',
+            '/no-such-page/',
+        ]
+        for url in urls:
+            with self.subTest(url=url):
+                self.assertIn(self.HEADER, self.client.get(url))
+
+    def test_category_filter_page_is_covered(self):
+        """分类筛选走的是同一个视图但换了 query string，别被绕过。"""
+        policy = self._policy(reverse('showcase:home') + '?category=materials')
+        self.assertIn("script-src 'self'", policy)
+
+    # ---------- 内容：策略到底严不严 ----------
+    def test_policy_has_no_escape_hatches(self):
+        """钉住「没有后门」：这几个词只要出现一个，整条策略基本就废了。"""
+        policy = self._policy(reverse('showcase:home'))
+        for banned in ("'unsafe-inline'", "'unsafe-eval'", 'data:', 'blob:',
+                       "'strict-dynamic'", 'http:', 'https:'):
+            with self.subTest(banned=banned):
+                self.assertNotIn(banned, policy)
+
+    def test_no_source_expression_names_a_third_party_host(self):
+        """整条策略里不该出现任何具体主机名。
+
+        这是「能否挡住 beacon.cdn.qq.com」的静态证明：策略里没有任何
+        允许第三方主机的源表达式，所以任何非本站的脚本来源都进不来。
+        """
+        policy = self._policy(reverse('showcase:home'))
+        for token in policy.replace("'", ' ').split():
+            if token.startswith(('http://', 'https://', '//', '*')):
+                self.fail('策略里出现了第三方来源: %s' % token)
+
+    def test_script_style_and_framing_are_locked_down(self):
+        d = self._directives(self._policy(reverse('showcase:home')))
+        self.assertEqual(d['script-src'], "'self'")
+        self.assertEqual(d['style-src'], "'self'")
+        self.assertEqual(d['default-src'], "'self'")
+        self.assertEqual(d['base-uri'], "'none'")
+        self.assertEqual(d['object-src'], "'none'")
+        self.assertEqual(d['frame-ancestors'], "'none'")
+
+    def test_directive_set_is_pinned(self):
+        """把指令集合整体钉住：少一条（比如有人顺手删了 object-src）就报错。"""
+        d = self._directives(self._policy(reverse('showcase:home')))
+        expected = {
+            'default-src', 'script-src', 'style-src', 'img-src', 'font-src',
+            'media-src', 'connect-src', 'form-action', 'base-uri',
+            'object-src', 'frame-ancestors',
+        }
+        self.assertEqual(set(d) - {'upgrade-insecure-requests'}, expected)
+
+    def test_policy_parses_without_empty_directives(self):
+        policy = self._policy(reverse('showcase:home'))
+        for part in policy.split(';'):
+            self.assertTrue(part.strip(), '出现空指令（多余的 ; ）: %r' % policy)
+
+    # ---------- https 才加升级指令 ----------
+    def test_https_gets_upgrade_insecure_requests(self):
+        policy = self._policy(reverse('showcase:home'), secure=True)
+        self.assertIn('upgrade-insecure-requests', policy)
+
+    def test_http_omits_upgrade_insecure_requests(self):
+        """本地 http 开发不能带这条 —— 它会把 http 子资源强行升级，
+        制造出「本地才有、线上没有」的假故障。"""
+        self.assertNotIn('upgrade-insecure-requests',
+                         self._policy(reverse('showcase:home')))
+
+    # ---------- 豁免与开关 ----------
+    def test_admin_is_exempt(self):
+        """admin 必须豁免：它不是对外面，加 CSP 零收益，且后台的内联样式
+        会让 ``style-src 'self'`` 打坏页面。豁免是刻意的，别顺手"修"掉。"""
+        response = self.client.get('/admin/login/')
+        self.assertNotIn(self.HEADER, response)
+
+    def test_can_be_disabled_by_settings(self):
+        with override_settings(CSP_ENABLED=False):
+            response = self.client.get(reverse('showcase:home'))
+        self.assertNotIn(self.HEADER, response)
+
+    def test_existing_header_is_not_overwritten(self):
+        """视图若自己设过更严的策略，中间件不该覆盖它。"""
+        from django.test import RequestFactory
+
+        from .middleware import ContentSecurityPolicyMiddleware
+
+        response = HttpResponse("x")
+        response[self.HEADER] = "default-src 'none'"
+        mw = ContentSecurityPolicyMiddleware(lambda request: response)
+        out = mw(RequestFactory().get('/'))
+        self.assertEqual(out[self.HEADER], "default-src 'none'")
+
+    # ---------- 别把媒体流打坏 ----------
+    @override_settings(SERVE_MEDIA=True)
+    def test_media_range_still_works_with_csp(self):
+        """CSP 是加头，不该影响流式响应 —— 但「不该」得验，不能假设。"""
+        project = Project.objects.exclude(video_file='').first()
+        self.assertIsNotNone(project)
+        url = project.video_file.url
+        full = self.client.get(url)
+        self.assertEqual(full.status_code, 200)
+        self.assertEqual(full['Accept-Ranges'], 'bytes')
+        self.assertIn(self.HEADER, full)
+
+        part = self.client.get(url, HTTP_RANGE='bytes=0-99')
+        self.assertEqual(part.status_code, 206)
+        self.assertEqual(len(b''.join(part.streaming_content)), 100)
