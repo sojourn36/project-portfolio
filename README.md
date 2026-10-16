@@ -8,7 +8,19 @@
 
 <sub>AI × 新材料研发 ｜ 轨道交通智能系统 ｜ 视觉智能与系统交付</sub>
 
+---
+
+### ▶ [**点这里直接看在线站点**](https://7ab156b731314b5599d7ff21a3c6f183.sg.agentos-app.run)
+
+<sub>分类筛选、项目翻页、演示视频都能真点 —— 不是静态快照，是真的 Django 在跑</sub>
+
+---
+
 </div>
+
+> **这个仓库和上面那个链接是什么关系？**
+> 仓库里是**源码**，GitHub 不会替你运行 Django。
+> 想看到网站本身，请点上面的在线地址；想在本地跑，见「快速开始」。
 
 ---
 
@@ -433,6 +445,21 @@ SERVER_CMD="python manage.py runserver 0.0.0.0:8000 --insecure" bash deploy/star
 > gunicorn + WhiteNoise 自托管静态文件、Django 自托管媒体文件。
 > 这是为了让一个 Django 应用在**只有一个 HTTP 端口**的环境里也能完整跑起来，
 > 不是为了替代 Nginx + CDN 的标准生产架构。
+
+### 当前线上部署
+
+[在线站点](https://7ab156b731314b5599d7ff21a3c6f183.sg.agentos-app.run)
+就是按上面的方式跑起来的：单端口沙箱 + `deploy/start.sh`，
+数据库用仓库同级的 SQLite（启动时若为空会自动补种子数据）。
+
+线上域名还没最终定下来，所以刻意保持了两个「先关掉」：
+
+- `DJANGO_HSTS_SECONDS=0` —— HSTS 一旦被浏览器记住，**在到期前撤不掉**，
+  不适合绑在一个可能变化的临时域名上；
+- `DJANGO_SITE_URL` 留空 —— 回退到请求域名，`og:url` / `og:image` /
+  `canonical` / sitemap 都自动用上真实域名（已实测确认）。
+
+**换成正式域名后**，把这两个值配上即可，分享卡片与 sitemap 会自动跟着换。
 
 ---
 
