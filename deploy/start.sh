@@ -58,6 +58,11 @@ if [ "${COUNT:-0}" = "0" ]; then
   "$PY" manage.py seed_projects
 fi
 
+# 这里**刻意不跑** `make_thumbs`：缩略图是提交进仓库的产物。
+# 放在部署时生成的话，本地 runserver 会回退到原图（缩略图还没生成），
+# 于是出现「本地好好的、上线才发现不一样」—— 那正是要避免的差异。
+# 源图换了请在本地重跑 `python manage.py make_thumbs --force` 并提交。
+
 echo "[i] collectstatic"
 "$PY" manage.py collectstatic --noinput >/dev/null
 

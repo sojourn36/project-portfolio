@@ -10,6 +10,31 @@
 from django.db import models
 from django.urls import reverse
 
+from .thumbs import thumb_url as _thumb_url
+
+
+def _shot_upload_to(instance, filename):
+    """截图按项目分目录：``shots/<项目 slug>/<文件名>``。
+
+    ``upload_to='shots/'`` 会把所有项目的图**平铺**在同一个目录里：文件名一撞
+    就由 Django 自动加随机后缀（``01.png`` → ``01_Ab3xY9.png``），
+    ``media/shots/`` 很快变得没法看。种子数据用的是 ``shots/<slug>/xx.png``，
+    这里保持一致 —— 后台传的图和命令行归集的图应当落在同一种结构里。
+    """
+    # 新建内联行时 project 已由 formset 赋好；万一是程序里直接构造且没设，
+    # RelatedObjectDoesNotExist 是 AttributeError 的子类，会被 getattr 吞掉。
+    slug = getattr(instance.project, 'slug', '') or 'misc'
+    return 'shots/{}/{}'.format(slug, filename)
+
+
+def _cover_upload_to(instance, filename):
+    """卡片封面带上项目 slug：``covers/<slug>-<文件名>``。
+
+    沿用仓库里已有的命名（``covers/gesture-hci-cover.jpg``），
+    让「这张封面属于哪个项目」从路径上就能看出来。
+    """
+    return 'covers/{}-{}'.format(instance.slug or 'misc', filename)
+
 
 # ==========================================================================
 # 项目
@@ -57,10 +82,12 @@ class Project(models.Model):
     video_caption = models.CharField('视频说明', max_length=200, blank=True)
     demo_image = models.ImageField('演示动图 / 截图', upload_to='demos/', blank=True, null=True,
                                    help_text='没有视频时可放 GIF 动图')
-    cover_image = models.ImageField('列表封面图（可选）', upload_to='covers/', blank=True, null=True,
+    cover_image = models.ImageField('列表封面图（可选）', upload_to=_cover_upload_to,
+                                    blank=True, null=True,
                                     help_text='首页卡片封面。留空则自动取第一张实机截图，'
                                               '再退到演示动图；两者都无则不显示封面。'
-                                              '用于「第一张截图不适合当封面」时手工指定。')
+                                              '用于「第一张截图不适合当封面」时手工指定。'
+                                              '建议宽高比 2:1 左右（卡片是 172px 高的横条）。')
 
     created_at = models.DateTimeField('创建时间', auto_now_add=True)
     updated_at = models.DateTimeField('更新时间', auto_now=True)
@@ -115,9 +142,24 @@ class Project(models.Model):
 
     @property
     def cover_image_url(self):
-        """列表卡片封面图地址；无封面时返回空串（模板据此决定是否渲染）。"""
-        f = self.cover_image_file
-        return f.url if f else ''
+        """列表卡片封面**缩略图**地址；无封面时返回空串（模板据此决定是否渲染）。
+
+        与 ``cover_image_file`` 的分工：后者返回原图字段 —— 社交分享卡片
+        （``og:image``）需要全尺寸，那条路继续用原图；而列表卡片在页面上只有
+        ~380px 宽，用原图纯属浪费。线上实测首页滚全页 780 KB，其中卡片封面
+        就占了 190 / 171 / 147 / 98 / 57 KB 五张。
+
+        缩略图缺失时自动回退到原图（见 ``showcase/thumbs.py``）。
+        优先级与 ``cover_image_file`` 完全一致，只是逐项换成了 rendition。
+        """
+        if self.cover_image:
+            return _thumb_url(self.cover_image.name, self.cover_image.url)
+        shot = self.shots.first() if self.pk else None
+        if shot and shot.image:
+            return shot.thumb_url
+        if self.demo_image:
+            return self.demo_image.url
+        return ''
 
     @property
     def cover_caption(self):
@@ -152,7 +194,7 @@ class ProjectShot(models.Model):
 
     project = models.ForeignKey(Project, related_name='shots',
                                 on_delete=models.CASCADE, verbose_name='所属项目')
-    image = models.ImageField('图片', upload_to='shots/')
+    image = models.ImageField('图片', upload_to=_shot_upload_to)
     caption = models.CharField('图片说明', max_length=160, blank=True)
     kind = models.CharField('类型', max_length=10, choices=KIND_CHOICES,
                             default=KIND_UI)
@@ -165,6 +207,21 @@ class ProjectShot(models.Model):
 
     def __str__(self):
         return self.caption or (self.image.name if self.image else '未命名截图')
+
+    @property
+    def thumb_url(self):
+        """网格卡片用的缩略图地址；缩略图不存在时**回退到原图**。
+
+        为什么要有它：卡片在 CSS 里是 ``height: 200px`` 的小图，而原先 ``<img src>``
+        直接用原图 —— 等于拿一张 555 KB 的图去渲染 200px 缩略图。线上实测
+        yolov8 详情页 797 KB 里有 556 KB 是这么浪费掉的。
+
+        回退是刻意的 fail-open：刚克隆仓库、还没跑 ``make_thumbs``，或者原图换了
+        但缩略图没重生成，页面都应当照常显示（只是重一些），而不是裂图。
+        """
+        if not self.image:
+            return ''
+        return _thumb_url(self.image.name, self.image.url)
 
 
 class Contribution(models.Model):

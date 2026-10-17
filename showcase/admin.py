@@ -1,6 +1,6 @@
 """后台管理：在 Admin 中直接维护项目、贡献点、指标、技术栈与演示视频。"""
 
-from django.contrib import admin
+from django.contrib import admin, messages
 from django.utils.html import format_html
 
 from .models import (
@@ -97,6 +97,37 @@ class ProjectAdmin(admin.ModelAdmin):
         if not n:
             return format_html('<span style="color:#b45309">— 无</span>')
         return format_html('<span style="color:#0d9488">✔ {} 张</span>', n)
+
+    # ---- 保存时顺手生成缩略图 ----
+    def save_related(self, request, form, formsets, change):
+        """内联表保存完之后，为该项目的图片补上缩略图。
+
+        为什么放在这里而不是让模型 ``save()`` 去做：缩略图缺失**不会**让页面坏掉
+        （``thumb_url`` 会回退到原图），所以「传了图但没跑 ``make_thumbs``」的后果
+        只是**页面悄悄变重** —— 几乎不可能被人注意到。与其指望记得，不如保存时
+        就做掉，而且用的是与命令行同一个 ``build()``，不会出现两套行为。
+
+        失败只提示、不阻断保存：缩略图是优化，不是内容。
+        """
+        super().save_related(request, form, formsets, change)
+
+        from .thumbs import build
+
+        names = [shot.image.name for shot in form.instance.shots.all() if shot.image]
+        if form.instance.cover_image:
+            names.append(form.instance.cover_image.name)
+
+        failed = []
+        for name in names:
+            try:
+                build(name)
+            except Exception as exc:                      # pragma: no cover
+                failed.append('{}（{}）'.format(name, exc))
+        if failed:
+            messages.warning(
+                request,
+                '以下图片的缩略图生成失败，页面会回退到原图（较慢但不会裂图）：{}'
+                .format('、'.join(failed)))
 
 
 @admin.register(Profile)

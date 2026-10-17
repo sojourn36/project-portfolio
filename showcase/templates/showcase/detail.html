@@ -96,7 +96,8 @@
             <figure class="shot-card">
               <a class="shot-thumb" href="{{ shot.image.url }}" target="_blank"
                  rel="noopener noreferrer">
-                <img src="{{ shot.image.url }}" loading="lazy"
+                {# 网格用缩略图、点开的才是原图。缩略图缺失时 thumb_url 自动回退到原图。 #}
+                <img src="{{ shot.thumb_url }}" loading="lazy"
                      alt="{% if shot.caption %}{{ shot.caption }}{% else %}{{ project.title }}{% endif %}">
               </a>
               <figcaption>

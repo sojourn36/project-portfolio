@@ -30,6 +30,18 @@ from .models import (
 )
 
 
+def _url_stem(url):
+    """把 ``/media/thumbs/shots/x/01-y.png`` 归一成 ``shots/x/01-y``。
+
+    依次去掉 ``/media/`` 前缀、``thumbs/`` 这一层、以及扩展名 ——
+    用来判断「卡片缩略图」与「原图」是不是同一张图（rendition 不同、来源相同）。
+    """
+    rel = url.split('/media/', 1)[-1]
+    if rel.startswith('thumbs/'):
+        rel = rel[len('thumbs/'):]
+    return os.path.splitext(rel)[0]
+
+
 class SeedDataTestCase(TestCase):
     """统一用 seed_projects 导入真实数据，保证测试与线上数据一致。"""
 
@@ -186,15 +198,20 @@ class SeedDataTestCase(TestCase):
 
     # ---------- 列表卡片封面 ----------
     def test_cover_image_priority(self):
-        """封面优先级：显式 cover_image → 第一张实机截图 → 演示动图 → 空串。"""
+        """封面优先级：显式 cover_image → 第一张实机截图 → 演示动图 → 空串。
+
+        注意断言里**不带扩展名**：卡片取的是 ``thumbs/`` 下的缩略图，而缩略图的
+        扩展名由生成时按内容实测决定（图表选 PNG、截图选 JPEG），
+        写死 ``.png`` 就等于把那个决策钉死，反而测错了东西。
+        """
         # 1) 显式指定封面时用它
         gesture = Project.objects.get(slug='gesture-hci')
         self.assertTrue(gesture.cover_image)
-        self.assertIn('covers/gesture-hci-cover.jpg', gesture.cover_image_url)
+        self.assertIn('covers/gesture-hci-cover', gesture.cover_image_url)
         # 2) 未指定封面时回落到第一张实机截图
         ep = Project.objects.get(slug='experimentpilot-ai')
         self.assertFalse(ep.cover_image)
-        self.assertIn('shots/experimentpilot-ai/01-structured-records.png',
+        self.assertIn('experimentpilot-ai/01-structured-records',
                       ep.cover_image_url)
         # 3) 都没有时返回空串，模板据此不渲染封面
         bare = Project.objects.create(
@@ -317,12 +334,52 @@ class SeedDataTestCase(TestCase):
                       html)
         self.assertIn('property="og:image:width" content="1200"', html)
 
-    def test_cover_image_file_matches_url(self):
-        """cover_image_file 与 cover_image_url 必须指向同一个文件。"""
+    def test_cover_url_is_a_smaller_rendition_of_the_same_picture(self):
+        """``cover_image_file``（原图，给 og:image）与 ``cover_image_url``（卡片缩略图）
+        必须指向**同一张图**，但允许是不同 rendition。
+
+        这条断言原来写的是「两个 URL 完全相同」。加了缩略图之后那不再成立 ——
+        卡片用的是 ``thumbs/`` 下的缩小版。与其放宽，不如把它换成更强的不变量：
+
+          ① 同一张源图（去掉 ``thumbs/`` 前缀与扩展名后，路径主体必须一致）
+          ② 两者都指向 ``MEDIA_ROOT`` 下真实存在的文件
+          ③ **若**有缩略图，它必须确实更小（否则这层缩略图就是白加的）
+
+        ③ 特意写成条件式的：没有缩略图、直接用原图，是一条**设计内的合法路径**
+        （``make_thumbs`` 对「源图已足够小、重压反而更大」的图就不生成缩略图，
+        实测 ``covers/gesture-hci-cover.jpg``：源图 48 KB，800 宽的缩略图 50 KB）。
+        把「必须更小」写死会把这条例外判成失败，而它恰恰是省流量的正确做法。
+
+        写死 URL 相等则会让「缩略图生效」本身变成失败 —— 那种测试只会被删掉。
+        """
         for project in Project.objects.all():
             with self.subTest(project=project.slug):
                 f = project.cover_image_file
-                self.assertEqual(project.cover_image_url, f.url if f else '')
+                if not f:
+                    self.assertEqual(project.cover_image_url, '')
+                    continue
+
+                url = project.cover_image_url
+                # ① 同一张图：URL 去掉前缀与扩展名后必须一致
+                self.assertEqual(_url_stem(url), _url_stem(f.url),
+                                 '卡片缩略图与原图不是同一张图')
+
+                # ② 都真实存在
+                thumb_rel = url[len(settings.MEDIA_URL):]
+                orig_rel = f.url[len(settings.MEDIA_URL):]
+                thumb_path = os.path.join(settings.MEDIA_ROOT, thumb_rel)
+                orig_path = os.path.join(settings.MEDIA_ROOT, orig_rel)
+                self.assertTrue(os.path.isfile(thumb_path), '卡片图不存在: %s' % thumb_rel)
+                self.assertTrue(os.path.isfile(orig_path), '原图文件不存在: %s' % orig_rel)
+
+                # ③ 有缩略图时必须更小；用原图时两者本就是同一个文件，跳过
+                if thumb_rel.startswith('thumbs/'):
+                    self.assertLess(os.path.getsize(thumb_path),
+                                    os.path.getsize(orig_path),
+                                    '缩略图并不比原图小: %s' % thumb_rel)
+                else:
+                    self.assertEqual(thumb_rel, orig_rel,
+                                     '既不在 thumbs/ 下，又不是原图，说不清是什么')
 
     # ---------- 截断省略号 ----------
     @unittest.skipUnless(django.VERSION[:2] == (3, 2),
@@ -831,3 +888,432 @@ class ContentSecurityPolicyTestCase(TestCase):
         part = self.client.get(url, HTTP_RANGE='bytes=0-99')
         self.assertEqual(part.status_code, 206)
         self.assertEqual(len(b''.join(part.streaming_content)), 100)
+
+
+class ThumbTestCase(TestCase):
+    """缩略图层：路径约定、缺失回退、生成命令的幂等性。
+
+    **为什么「回退」要单独测**：缩略图是**可选产物** —— 刚克隆仓库、还没跑
+    ``make_thumbs``，或者源图换了但缩略图没重生成，页面都必须照常显示（用原图），
+    而不是裂图。这种「缺失时降级」的路径最容易被忽略，也最容易只在别人机器上炸。
+
+    **为什么不用 ``seed_projects`` 造数据**（踩过：10 项测试一起挂）：seed 只在
+    ``media/`` 下文件**真实存在**时才建 ``ProjectShot`` 记录，而本类把
+    ``MEDIA_ROOT`` 指到临时目录 —— 于是 seed 一条图片记录都建不出来，所有断言
+    都变成「记录是 None」，看起来像缩略图功能坏了，其实只是夹具没建起来。
+    改成自建最小夹具：要测哪张图、就放哪张图，记录与文件一一对应，测试意图
+    不必再靠猜 seed 数据的形状来表达。附带好处：``make_thumbs`` 只遍历这两条
+    记录，跑得快。
+
+    生成命令一律写进临时 ``MEDIA_ROOT``，不碰仓库里已提交的 ``media/thumbs/``。
+    """
+
+    # 用仓库里两张**真实**图片：一张大面积平色的图表、一张连续色调的 GUI 截图。
+    # 编码决策那条测试依赖它们的真实内容 —— 换成合成图就测不到真实结论了。
+    CHART = 'shots/femnsic-fatigue-optimization/03-loocv-model-comparison.png'
+    SHOT = 'shots/yolov8-detection-desktop/01-desktop-gui.png'
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix='wb-thumb-test-')
+        self.override = override_settings(MEDIA_ROOT=self.tmp)
+        self.override.enable()
+
+        self.project = Project.objects.create(
+            title='缩略图夹具', slug='thumb-fixture',
+            category=Project.CATEGORY_MATERIALS,
+            summary='仅用于缩略图测试', order=1)
+        # 两条记录都建出来，但**源图默认不落地**：需要真实文件的测试自己调
+        # ``_place()``。这样「记录在、文件不在」也就成了一种自然状态，
+        # 不用特意去删文件才能测到缺图那条分支。
+        self.chart = self._add_shot(self.CHART, order=0)
+        self.shot = self._add_shot(self.SHOT, order=1)
+
+    def tearDown(self):
+        self.override.disable()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    # ---------- 夹具 ----------
+    def _add_shot(self, rel, order=0):
+        shot = ProjectShot(project=self.project, kind=ProjectShot.KIND_FIGURE,
+                           order=order)
+        shot.image.name = rel
+        shot.save()
+        return shot
+
+    def _place(self, rel):
+        """把仓库里的真实源图复制进临时 MEDIA_ROOT，返回其字节数。"""
+        src = os.path.join(settings.BASE_DIR, 'media', rel)
+        dst = os.path.join(self.tmp, rel)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.copyfile(src, dst)
+        return os.path.getsize(dst)
+
+    def _thumb_of(self, rel):
+        """已生成的缩略图绝对路径；扩展名由内容决定，两种都找。没有则 None。"""
+        base = 'thumbs/' + os.path.splitext(rel)[0]
+        for ext in ('.png', '.jpg'):
+            path = os.path.join(self.tmp, base + ext)
+            if os.path.isfile(path):
+                return path
+        return None
+
+    # ---------- 路径约定与回退 ----------
+    def test_falls_back_to_original_when_thumb_missing(self):
+        """没有缩略图时必须回退原图 —— 这是 fail-open，不是错误。"""
+        from .thumbs import find_thumb, thumb_url
+
+        self.assertEqual(find_thumb(self.CHART), '')
+        self.assertEqual(thumb_url(self.CHART, '/media/' + self.CHART),
+                         '/media/' + self.CHART)
+
+    def test_finds_thumb_regardless_of_extension(self):
+        """生成端可能产出 .jpg 或 .png，读取端两种都要认。"""
+        from .thumbs import find_thumb
+
+        base = 'thumbs/shots/demo/01-x'
+        for ext in ('.png', '.jpg'):
+            rel = base + ext
+            os.makedirs(os.path.dirname(os.path.join(self.tmp, rel)), exist_ok=True)
+            with open(os.path.join(self.tmp, rel), 'wb') as fh:
+                fh.write(b'x')
+            self.assertEqual(find_thumb('shots/demo/01-x.png'), rel)
+            os.remove(os.path.join(self.tmp, rel))
+
+    def test_empty_image_name_is_safe(self):
+        from .thumbs import find_thumb, thumb_url
+
+        self.assertEqual(find_thumb(''), '')
+        self.assertEqual(thumb_url('', '/media/fallback.png'), '/media/fallback.png')
+
+    def test_project_shot_thumb_url_prefers_thumb(self):
+        """有缩略图时 ``thumb_url`` 指向它，``image.url`` 仍指向原图。"""
+        self.assertEqual(self.chart.thumb_url, self.chart.image.url)  # 没缩略图 -> 原图
+
+        rel = 'thumbs/' + os.path.splitext(self.CHART)[0] + '.png'
+        os.makedirs(os.path.dirname(os.path.join(self.tmp, rel)), exist_ok=True)
+        with open(os.path.join(self.tmp, rel), 'wb') as fh:
+            fh.write(b'x')
+
+        self.assertEqual(self.chart.thumb_url, settings.MEDIA_URL + rel)
+        self.assertIn('shots/', self.chart.image.url)                 # 原图路径没变
+
+    # ---------- 生成命令 ----------
+    def test_make_thumbs_generates_smaller_files(self):
+        sizes = {rel: self._place(rel) for rel in (self.CHART, self.SHOT)}
+
+        call_command('make_thumbs', verbosity=0)
+
+        for rel, before in sizes.items():
+            with self.subTest(source=rel):
+                thumb = self._thumb_of(rel)
+                self.assertIsNotNone(thumb, '应生成缩略图')
+                self.assertLess(os.path.getsize(thumb), before)
+
+    def test_make_thumbs_picks_encoding_by_content(self):
+        """图表选 PNG、连续色调截图选 JPEG —— 实测结论，别退化成硬编码规则。"""
+        for rel in (self.CHART, self.SHOT):
+            self._place(rel)
+
+        call_command('make_thumbs', verbosity=0)
+
+        chart = 'thumbs/' + os.path.splitext(self.CHART)[0] + '.png'
+        shot = 'thumbs/' + os.path.splitext(self.SHOT)[0] + '.jpg'
+        self.assertTrue(os.path.isfile(os.path.join(self.tmp, chart)),
+                        '大面积平色的图表应当选 PNG 调色板（实测更小且更清晰）')
+        self.assertTrue(os.path.isfile(os.path.join(self.tmp, shot)),
+                        '连续色调截图应当选 JPEG（实测更小且 PSNR 更高）')
+
+    def test_make_thumbs_is_idempotent(self):
+        """跑第二遍不该重做 —— 否则每次部署都要多花一遍时间。
+
+        判据是「文件没被改写」：记下第一遍产物的字节与 mtime，第二遍之后两者都
+        必须原封不动。这比只断言输出文字更硬 —— 命令嘴上说「复用」、背地里重写，
+        光查输出是查不出来的。
+
+        （早先这里试过「往缩略图里写个标记再跑」的写法，但复用判断现在会**打开
+        文件核对像素宽度**，一个装标记的假文件本来就不该被复用 —— 新逻辑把它
+        正确地拒掉了，于是那条路走不通，判据换回字节 + mtime。）
+        """
+        self._place(self.CHART)
+        call_command('make_thumbs', verbosity=0)
+        thumb = self._thumb_of(self.CHART)
+        self.assertIsNotNone(thumb)
+        with open(thumb, 'rb') as fh:
+            first = fh.read()
+        mtime = os.path.getmtime(thumb)
+
+        out = io.StringIO()
+        call_command('make_thumbs', verbosity=0, stdout=out)
+
+        with open(thumb, 'rb') as fh:
+            self.assertEqual(fh.read(), first, '第二遍重写了文件')
+        self.assertEqual(os.path.getmtime(thumb), mtime, '第二遍动了 mtime')
+        self.assertIn('生成 0 张', out.getvalue())
+        self.assertIn('复用 1 张', out.getvalue())
+
+    def test_make_thumbs_force_regenerates(self):
+        """``--force`` 要真的重写，而不只是「不跳过」。
+
+        同样用**文件内容**做判据而不是 mtime：先把缩略图弄坏，``--force`` 之后
+        它必须变回一张真图。mtime 的时钟粒度在不同文件系统上不一样，同一时刻写完
+        再写会得出「没变」的假失败。
+        """
+        self._place(self.CHART)
+        call_command('make_thumbs', verbosity=0)
+        thumb = self._thumb_of(self.CHART)
+        self.assertIsNotNone(thumb)
+        with open(thumb, 'rb') as fh:
+            good = fh.read()
+
+        with open(thumb, 'wb') as fh:                  # 先把它弄坏
+            fh.write(b'not an image')
+
+        out = io.StringIO()
+        call_command('make_thumbs', verbosity=0, force=True, stdout=out)
+
+        self.assertIn('生成 1 张', out.getvalue())
+        with open(thumb, 'rb') as fh:
+            self.assertEqual(fh.read(), good, '--force 没有重写文件')
+
+    def test_make_thumbs_dry_run_writes_nothing(self):
+        self._place(self.CHART)
+
+        call_command('make_thumbs', verbosity=0, dry_run=True)
+
+        self.assertFalse(os.path.isdir(os.path.join(self.tmp, 'thumbs')),
+                         '--dry-run 不该产生任何文件')
+
+    def test_make_thumbs_survives_missing_source(self):
+        """源图缺失只跳过、不抛异常 —— 库里有记录但文件没传上来是真实情况。"""
+        self._place(self.CHART)          # 只放图表；SHOT 记录在、文件不在
+
+        out = io.StringIO()
+        call_command('make_thumbs', verbosity=0, stdout=out)
+
+        text = out.getvalue()
+        self.assertIn('源图缺失 1 张', text)
+        self.assertIn(self.SHOT, text)
+        self.assertIsNone(self._thumb_of(self.SHOT))
+        self.assertIsNotNone(self._thumb_of(self.CHART), '一张缺图不该拖累另一张')
+
+    def test_make_thumbs_respects_width(self):
+        self._place(self.CHART)
+        call_command('make_thumbs', verbosity=0, width=200)
+
+        thumb = self._thumb_of(self.CHART)
+        self.assertIsNotNone(thumb)
+        with PILImage.open(thumb) as im:
+            self.assertEqual(im.width, 200)
+
+    def test_make_thumbs_skips_when_source_already_smaller(self):
+        """源图已经比缩略图小时**不生成**，并清掉可能存在的旧缩略图。
+
+        实测踩到：``covers/gesture-hci-cover.jpg`` 源图 48 KB，而 800 宽的
+        「缩略图」反而 50 KB —— 生成它纯属**增加**流量。这时正确的做法是什么都不
+        生成，让 ``thumb_url`` 那套 fail-open 回退到原图。
+
+        这里把源图造成「400 宽 + JPEG q5」：宽度低于目标宽度（不会被缩放），
+        质量又低到任何 q80/90 重编码的 PSNR 都够不到 38 dB 的门槛 ——
+        于是命令只能挑 PSNR 最高的那个候选，也就是**最大**的那个，
+        必然超过源图体积。触发条件因此是确定的，不靠碰运气。
+        """
+        src = os.path.join(self.tmp, self.SHOT)
+        os.makedirs(os.path.dirname(src), exist_ok=True)
+        with PILImage.open(os.path.join(settings.BASE_DIR, 'media', self.SHOT)) as im:
+            w = 400
+            im.convert('RGB').resize(
+                (w, max(1, round(im.height * w / im.width))), PILImage.LANCZOS
+            ).save(src, 'JPEG', quality=5)
+        before = os.path.getsize(src)
+
+        # 预置一份"上次生成的缩略图"：是张真图，但**比源图还大** ——
+        # 正是要修的那个情形（重压低质量源图反而更肿）
+        stale = os.path.join(self.tmp, 'thumbs',
+                             os.path.splitext(self.SHOT)[0] + '.png')
+        os.makedirs(os.path.dirname(stale), exist_ok=True)
+        with PILImage.open(src) as im:
+            im.save(stale, 'PNG')
+        self.assertGreater(os.path.getsize(stale), before, '夹具前提：旧缩略图应当比源图大')
+
+        out = io.StringIO()
+        call_command('make_thumbs', verbosity=0, stdout=out)
+
+        self.assertIn('源图已足够小 1 张', out.getvalue())
+        self.assertIsNone(self._thumb_of(self.SHOT), '不该留下缩略图')
+        self.assertEqual(os.path.getsize(src), before, '不该动源图')
+
+    def test_make_thumbs_ignores_thumb_at_wrong_width(self):
+        """别人跑过 ``--width 200`` 留下的缩略图，默认跑时不该被当成「已是最新」。
+
+        只看大小与时间的复用判断会放它过去 —— 200px 的缩略图当然比源图小、
+        也比源图新。于是仓库里会一直留着 200px 的缩略图，页面上明显发虚，
+        而且第二次跑还会理直气壮地报「复用 16 张」。宽度是唯一能验证
+        「这份缩略图是照本次参数生成的」的凭据。
+        """
+        from .management.commands.make_thumbs import DEFAULT_WIDTH
+
+        self._place(self.CHART)
+        call_command('make_thumbs', verbosity=0, width=200)
+        with PILImage.open(self._thumb_of(self.CHART)) as im:
+            self.assertEqual(im.width, 200)
+
+        out = io.StringIO()
+        call_command('make_thumbs', verbosity=0, stdout=out)
+
+        self.assertIn('生成 1 张', out.getvalue())
+        with PILImage.open(self._thumb_of(self.CHART)) as im:
+            self.assertEqual(im.width, DEFAULT_WIDTH)
+
+    def test_make_thumbs_removes_stale_other_extension(self):
+        """换编码后必须把旧的另一种扩展名删掉。
+
+        不删的话仓库里会同时留着 .jpg 与 .png 两份缩略图 —— 多出一份没人引用的
+        文件，而且 ``find_thumb`` 的优先级会让「哪份在生效」变得不明显。
+
+        这不是假想：默认宽度从 640 改到 800 时，``experimentpilot-ai/01`` 那张
+        就从 JPEG 翻到了 PNG（截图里大块平色区让 PNG 的体量增长慢于 JPEG，
+        两条曲线在中间某处交叉）。
+        """
+        self._place(self.CHART)
+        base = os.path.join(self.tmp, 'thumbs', os.path.splitext(self.CHART)[0])
+        os.makedirs(os.path.dirname(base), exist_ok=True)
+        for ext in ('.jpg', '.png'):
+            with open(base + ext, 'wb') as fh:
+                fh.write(b'stale')
+
+        call_command('make_thumbs', verbosity=0)
+
+        left = [e for e in ('.jpg', '.png') if os.path.isfile(base + e)]
+        self.assertEqual(len(left), 1, '应当只剩一份缩略图，实际: %s' % left)
+        with open(base + left[0], 'rb') as fh:
+            self.assertNotEqual(fh.read(), b'stale', '留下的那份应当是刚生成的')
+
+    def test_default_width_covers_2x_cards(self):
+        """默认宽度必须覆盖卡片在 2× 屏上的**实际**渲染宽度。
+
+        实测（``docs/tools/measure_thumb_width.js``，1440 / 1600 / 768 / 390 四种
+        视口）：图集卡片渲染 350–359 CSS px，2× 即 700–718 设备像素；而
+        ``object-fit: cover`` 对**宽图是按高度放大的**，最宽的那张源图
+        （宽高比 1.86）实际需要 400 × 1.86 = 743px。
+
+        这条测试存在的意义：640 曾经「看起来够用」（注释里就写着「640 宽足够
+        覆盖 2× DPR」），直到真去量才发现每一张都在被放大 8–12%。把下限钉在
+        这里，谁想调小就得先解释为什么。
+        """
+        from .management.commands.make_thumbs import DEFAULT_WIDTH
+
+        self.assertGreaterEqual(DEFAULT_WIDTH, 768)
+
+    # ---------- 后台接线 ----------
+    def test_upload_path_is_grouped_by_project(self):
+        """后台上传的图必须落到 ``shots/<slug>/``，不能平铺在 ``shots/``。
+
+        平铺的话文件名一撞就被 Django 自动加随机后缀（``01.png`` →
+        ``01_Ab3xY9.png``），``media/shots/`` 很快变得没法看，而且
+        「这张图属于哪个项目」只能靠数据库反查。
+        """
+        shot = ProjectShot(project=self.project, kind=ProjectShot.KIND_UI, order=9)
+        shot.image = SimpleUploadedFile('01-x.png', b'x', content_type='image/png')
+        shot.save()
+        self.assertEqual(shot.image.name, 'shots/thumb-fixture/01-x.png')
+
+        self.project.cover_image = SimpleUploadedFile('cover.jpg', b'x',
+                                                     content_type='image/jpeg')
+        self.project.save()
+        self.assertEqual(self.project.cover_image.name,
+                         'covers/thumb-fixture-cover.jpg')
+
+    def test_admin_save_generates_thumb(self):
+        """后台保存项目后，新上传的图应当已经有缩略图 —— 不靠人记得跑命令。
+
+        这条测的是「接线」而不是「生成」：生成逻辑由 ``thumbs.build()`` 那组
+        测试覆盖。这里只确认 ``ProjectAdmin.save_related`` 真的把项目下的图片
+        都过了一遍 —— 漏了这条线，后果是**页面悄悄变重**，几乎不会有人发现。
+        """
+        from django.contrib.admin.sites import site
+        from django.test import RequestFactory
+
+        from .admin import ProjectAdmin
+
+        self._place(self.CHART)
+        self.assertIsNone(self._thumb_of(self.CHART), '夹具前提：此时还没有缩略图')
+
+        class _Form(object):
+            instance = self.project
+
+            def save_m2m(self):
+                pass
+
+        ProjectAdmin(Project, site).save_related(
+            RequestFactory().get('/admin/'), _Form(), [], False)
+
+        self.assertIsNotNone(self._thumb_of(self.CHART), '保存后应当已有缩略图')
+
+    def test_deleting_shot_does_not_touch_files(self):
+        """删记录**不该**删文件 —— 这是 Django 的默认行为，也是刻意的。
+
+        曾经在 ``ProjectShot`` 上挂过 ``post_delete`` 信号，让删截图时顺手删掉
+        它的缩略图（为了不留孤儿文件）。结果它把**真实**缩略图删了：
+        ``SeedDataTestCase`` 里有一条「清空 delivery 分类验证空态」的用例，
+        级联删除截图时信号照常触发，而那个测试类用的是真实 ``MEDIA_ROOT`` ——
+        于是跑一次测试，仓库里就少一张图，而且没有任何提示。
+
+        教训：把「删数据」和「删文件」绑在一起很危险，因为删数据的场景
+        （测试、重置种子、导入脚本）远比想象的多。Django 自己不在 delete 时
+        删文件，就是这个原因。孤儿缩略图改用显式的 ``make_thumbs --prune`` 清理。
+
+        这条测试就是那次事故的墓碑：谁再想把信号加回来，先看这里。
+        """
+        self._place(self.CHART)
+        call_command('make_thumbs', verbosity=0)
+        thumb = self._thumb_of(self.CHART)
+        self.assertIsNotNone(thumb)
+
+        self.chart.delete()
+
+        self.assertTrue(os.path.exists(thumb), '删记录不该动文件')
+
+    def test_make_thumbs_prune_removes_only_orphans(self):
+        """``--prune`` 删源图已不存在的缩略图；默认不删；源图还在的不动。"""
+        # 一个孤儿：源图从来没存在过
+        orphan = os.path.join(self.tmp, 'thumbs', 'shots', 'gone', '01-x.jpg')
+        os.makedirs(os.path.dirname(orphan), exist_ok=True)
+        with open(orphan, 'wb') as fh:
+            fh.write(b'x')
+
+        # 一个正常的：源图在、缩略图已生成
+        self._place(self.CHART)
+        call_command('make_thumbs', verbosity=0)
+        alive = self._thumb_of(self.CHART)
+        self.assertIsNotNone(alive)
+
+        call_command('make_thumbs', verbosity=0)          # 不带 --prune
+        self.assertTrue(os.path.exists(orphan), '默认不该删任何东西')
+
+        call_command('make_thumbs', verbosity=0, prune=True)
+        self.assertFalse(os.path.exists(orphan), '--prune 应当删掉孤儿')
+        self.assertTrue(os.path.exists(alive), '源图还在的缩略图不能被误删')
+
+    # ---------- 模板接线 ----------
+    def test_detail_gallery_uses_thumb_for_img_and_original_for_link(self):
+        """网格 ``<img>`` 用缩略图，点开的 ``<a href>`` 用原图 —— 两边都要对。"""
+        self._place(self.CHART)
+        call_command('make_thumbs', verbosity=0)
+
+        html = self.client.get('/project/thumb-fixture/').content.decode()
+        self.assertIn('/media/thumbs/', self.chart.thumb_url)
+        self.assertIn('src="%s"' % self.chart.thumb_url, html)
+        self.assertIn('href="%s"' % self.chart.image.url, html)
+
+    def test_home_card_uses_thumb(self):
+        """首页卡片封面同样走缩略图，别只改了详情页。
+
+        夹具项目**没有** ``cover_image``，于是走 ``shots.first()`` 这条回退 ——
+        正好把「封面优先级链」里非首项的那条也覆盖到。
+        """
+        self._place(self.CHART)
+        call_command('make_thumbs', verbosity=0)
+
+        url = self.project.cover_image_url
+        self.assertIn('/media/thumbs/', url)
+        self.assertIn('src="%s"' % url, self.client.get('/').content.decode())
