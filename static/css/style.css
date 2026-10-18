@@ -349,6 +349,24 @@ code { font-family: var(--mono); font-size: .88em; background: var(--line-soft);
 .detail-meta { display: flex; flex-wrap: wrap; gap: 18px; font-size: .87rem; color: var(--muted); }
 .detail-meta b { color: var(--ink-2); font-weight: 650; margin-right: 5px; }
 
+/* 在线演示入口（只渲染 kind=demo 且带地址的链接） */
+.hero-cta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.cta-btn {
+  display: inline-flex; align-items: center; gap: 8px; padding: 9px 16px;
+  border-radius: 999px; background: var(--brand); color: #fff;
+  font-size: .88rem; font-weight: 650; text-decoration: none;
+  box-shadow: 0 6px 16px -6px rgba(37, 99, 235, .55);
+  transition: transform .12s ease, background .15s ease;
+}
+.cta-btn:hover { background: var(--brand-deep); transform: translateY(-1px); }
+.cta-play { font-size: .68rem; line-height: 1; opacity: .9; }
+.cta-arrow { font-size: .82rem; opacity: .85; }
+.detail[data-cat="materials"] .cta-btn {
+  background: var(--c-materials);
+  box-shadow: 0 6px 16px -6px rgba(13, 148, 136, .55);
+}
+.detail[data-cat="materials"] .cta-btn:hover { background: #0b7c72; }
+
 .detail-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 34px; padding: 38px 24px 20px; }
 
 .block { margin-bottom: 40px; }

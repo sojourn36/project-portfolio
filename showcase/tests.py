@@ -25,8 +25,8 @@ from django.urls import reverse
 from django.utils import translation
 
 from .models import (
-    Education, Pillar, Profile, ProfileFact, Project, ProjectShot, SkillGroup,
-    Stat,
+    Education, Pillar, Profile, ProfileFact, Project, ProjectLink, ProjectShot,
+    SkillGroup, Stat,
 )
 
 
@@ -148,6 +148,35 @@ class SeedDataTestCase(TestCase):
         html = response.content.decode()
         self.assertIn('<video', html)
         self.assertIn('renwujiance-demo.mp4', html)
+
+    def test_detail_hero_shows_demo_link(self):
+        """在线演示入口要出现在**头部**（.hero-cta），不能只沉在页尾。
+
+        为什么单独钉住位置：详情页很长（视频 + 指标 + 图集），「相关链接」区块
+        在最下面。把这条链接的 kind 从 demo 改掉、或者模板里的 hero-cta 被误删，
+        页面看起来都还正常 —— 只是那个按钮没人看得到。
+        """
+        project = Project.objects.get(slug='experimentpilot-ai')
+        response = self.client.get(project.get_absolute_url())
+        html = response.content.decode()
+        self.assertIn('hero-cta', html)
+        self.assertIn('cta-btn', html)
+        self.assertIn(project.demo_links[0].url, html)
+
+    def test_demo_links_excludes_entries_without_url(self):
+        """只有文字、没有地址的「相关链接」条目不该变成按钮。
+
+        同一个项目里既有 kind=demo 的在线演示，也有「冻结编号 …」这类纯陈述，
+        后者渲染成按钮会让人以为点得动。
+        """
+        project = Project.objects.get(slug='experimentpilot-ai')
+        demo = project.demo_links
+        self.assertEqual(len(demo), 1)
+        self.assertEqual(demo[0].kind, ProjectLink.KIND_DEMO)
+        self.assertTrue(demo[0].url)
+        self.assertFalse([link for link in demo if not link.url])
+        # 纯陈述条目仍然在「相关链接」里，只是不进入 demo_links
+        self.assertGreaterEqual(project.links.count(), 2)
 
     def test_detail_uses_placeholder_when_no_media(self):
         # 临时建一个没有任何演示素材的项目，验证占位提示

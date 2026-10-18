@@ -32,6 +32,23 @@
           {% if project.role %}<span><b>我的角色</b> {{ project.role }}</span>{% endif %}
           {% if project.period %}<span><b>项目时间</b> {{ project.period }}</span>{% endif %}
         </p>
+        {% comment %}
+          在线演示放在头部而不是页面下方的「相关链接」：那个区块要滚过整段视频
+          和图集才看得到，而这里恰恰是访客最先想点的地方。
+          注意用 comment 标签而不是多行 {# #} —— 后者只支持单行，多行会原样
+          漏到页面上（本项目踩过一次）。
+        {% endcomment %}
+        {% if project.demo_links %}
+        <div class="hero-cta">
+          {% for link in project.demo_links %}
+            <a class="cta-btn" href="{{ link.url }}" target="_blank" rel="noopener noreferrer">
+              <span class="cta-play" aria-hidden="true">▶</span>
+              <span>{{ link.label }}</span>
+              <span class="cta-arrow" aria-hidden="true">↗</span>
+            </a>
+          {% endfor %}
+        </div>
+        {% endif %}
       </div>
     </div>
   </header>

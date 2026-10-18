@@ -89,6 +89,11 @@ PROJECTS = [
         'techs': ['Python', 'RAG', 'Chroma', 'Ollama / Qwen3:4B', 'FastAPI',
                   'SQLite', 'Streamlit', 'PyMuPDF / Docling', '哈希冻结与可审计设计'],
         'links': [
+            # kind=demo + 有地址 → 会渲染成详情页头部的「在线体验」按钮。
+            # 这是 ExperimentPilot AI 的线上只读演示：结构化文献查询与冻结专家模型
+            # 在线可用；全文 RAG 需要本机 Ollama，线上未启用（页面上明确标注）。
+            (ProjectLink.KIND_DEMO, '在线体验：只读演示',
+             'https://b859fefa591e4a1e910a759be77a2dd5.sg2.agentos-app.run'),
             (ProjectLink.KIND_OTHER, '冻结编号 DAY6_6_FROZEN_20260831', ''),
             (ProjectLink.KIND_PAPER, '架构文档 / 答辩材料 / 演示 GIF', ''),
         ],

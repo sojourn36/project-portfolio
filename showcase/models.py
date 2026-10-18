@@ -122,6 +122,21 @@ class Project(models.Model):
         return bool(self.shots.exists()) if self.pk else False
 
     @property
+    def demo_links(self):
+        """带地址的「在线演示」链接 —— 详情页头部那个醒目的体验入口。
+
+        只收 ``kind='demo'`` 且 ``url`` 非空的条目。为什么不直接把「相关链接」
+        整个搬上去：那个区块里有「冻结编号 DAY6_6_FROZEN_20260831」这类**只陈述
+        事实、没有地址**的条目，渲染成按钮会让人以为点得动。
+
+        与「相关链接」区块并存是有意的：区块在页面下方，适合陈列全部条目；
+        头部这个位置只留真正能点进去的东西。
+        """
+        if not self.pk:
+            return []
+        return list(self.links.filter(kind=ProjectLink.KIND_DEMO).exclude(url=''))
+
+    @property
     def cover_image_file(self):
         """``cover_image_url`` 实际取到的那个图片字段（可能为 ``None``）。
 
