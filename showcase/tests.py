@@ -189,7 +189,7 @@ class SeedDataTestCase(TestCase):
 
     # ---------- 实机截图 / 结果图 ----------
     def test_seed_creates_shot_gallery(self):
-        self.assertEqual(ProjectShot.objects.count(), 14)
+        self.assertEqual(ProjectShot.objects.count(), 15)
         for slug in ('experimentpilot-ai', 'femnsic-fatigue-optimization',
                      'subway-risk-decision', 'student-behavior-profiling',
                      'yolov8-detection-desktop'):
@@ -198,6 +198,11 @@ class SeedDataTestCase(TestCase):
                 self.assertTrue(project.has_shots)
                 for shot in project.shots.all():
                     self.assertTrue(shot.image.name.startswith('shots/%s/' % slug))
+        # Qt 端那张单独标成「桌面端界面」，与同一个项目里的 Streamlit 界面区分开 ——
+        # 类型标签是读者判断「这是哪个端」的唯一线索，退回 'ui' 就看不出来了。
+        qt = ProjectShot.objects.get(
+            image='shots/student-behavior-profiling/05-qt-realtime-analysis.png')
+        self.assertEqual(qt.kind, ProjectShot.KIND_GUI)
 
     def test_project_without_shots(self):
         # 手势交互只有视频、没有截图

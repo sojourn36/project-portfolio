@@ -274,6 +274,12 @@ PROJECTS = [
             ('shots/student-behavior-profiling/04-classroom-data.png', ProjectShot.KIND_UI,
              '课堂数据分析：由课堂视频解析出的学生行为专注度、情绪、头部姿态与群体专注度'
              '曲线（60 个时间点）。'),
+            # kind=gui（桌面端界面）与上面几张 Streamlit 界面区分开：这张是 Qt 端，
+            # 也是唯一一张能同时看到「实时视频 + 检测框 + 三路评分曲线」的截图。
+            ('shots/student-behavior-profiling/05-qt-realtime-analysis.png', ProjectShot.KIND_GUI,
+             '课程实时分析（Qt 桌面端）：选定视频源与教室通道后实时播放课堂画面，'
+             '逐人叠加行为检测框与专注度标注（FPS 21.19）；右侧为行为 / 情绪 / 头部姿态'
+             '三条专注度评分曲线，左下是评价因素一致性权重雷达图。'),
         ],
     },
 
