@@ -67,10 +67,16 @@ PROJECTS = [
                  '所有寿命数值都必须来自经哈希锁定的专家模型，从机制上杜绝"模型预测冒充实验结果"。\n\n'
                  '系统支持 PDF、Word、Excel 及扫描件 OCR 的批量解析入库，并提供受控编排层把三类来源组合成'
                  '可追溯的调查结果；证据与预测分层展示，越界成分会被直接拒绝。',
-        'video_caption': '演示动图：本地文献 RAG 与专家模型的受控编排流程（确定性演示，非实时录屏）。',
-        # 素材本体已随仓库发布在 media/demos/ 下，这里只写相对路径。
-        # 不设 demo_source —— 那会写死本机的绝对路径，换台机器必然失效。
-        'demo_target': 'demos/experimentpilot-demo.gif',
+        'video_caption': '演示视频：本机真实录屏 —— 四个只读组件自检、冻结专家模型的成分评估，'
+                         '以及一次完整的文献证据调查（结构化 [D] 证据优先于 RAG 文本）。'
+                         '调查段本地推理实际耗时约 78 秒，视频中该段按 8 倍速播放，'
+                         '结论与证据表恢复原速。',
+        # 素材本体已随仓库发布在 media/demos/ 与 media/videos/ 下，这里只写相对路径。
+        # 不设 demo_source / video_source —— 那会写死本机的绝对路径，换台机器必然失效。
+        'video_target': 'videos/experimentpilot-demo.mp4',
+        # 海报用最终结论那一帧的 JPG（50 KB），不用动图本身：有视频时 demo_image
+        # 只当 poster 用，浏览器却要下完整个 598 KB 的 GIF 才画得出第一帧。
+        'demo_target': 'demos/experimentpilot-poster.jpg',
         'contributions': [
             '设计「SQLite 结构化数据 — Chroma/Qwen3 文献证据 — FastAPI 专家预测」三层编排，'
             '实现溯源问答、适用域（AD）判断与越界拒绝。',
